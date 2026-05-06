@@ -1,0 +1,9 @@
+echo "🔨 Pre-commit: Running checks..."
+
+# Web typecheck only (fast ~5-10s)
+(cd src/web && bunx tsc --noEmit) || {
+  echo "❌ Typecheck failed! Commit aborted."
+  exit 1
+}
+
+echo "✅ Checks passed. Proceeding with commit."

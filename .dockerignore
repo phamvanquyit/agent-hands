@@ -1,0 +1,9 @@
+node_modules
+src/*/node_modules
+src/server/dist
+src/web/dist
+.git
+.DS_Store
+.vscode
+.agents
+*.md

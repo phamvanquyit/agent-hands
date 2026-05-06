@@ -1,0 +1,14 @@
+services:
+  moro-llm-toolkit:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: moro-llm-toolkit:latest
+    container_name: moro-llm-toolkit
+    restart: unless-stopped
+    ports:
+      - "18080:18080"
+    volumes:
+      - ./data:/data
+    environment:
+      - DATA_DIR=/data
