@@ -79,7 +79,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **API Keys** — key generation and management for agent access
 - **Auth** — JWT-based authentication with API key support
 - CLI entry point (`agent-hands start/stop/restart/status/logs`)
-- Docker support (Dockerfile + docker-compose)
 - Install script for one-line installation
 - Web UI with React 19 + Ant Design v6 + Tailwind CSS v4
 

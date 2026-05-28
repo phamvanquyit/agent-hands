@@ -209,12 +209,6 @@ curl -fsSL https://raw.githubusercontent.com/Zobite/agent-hands/main/install.sh 
 VERSION=${NEW_VERSION} curl -fsSL https://raw.githubusercontent.com/Zobite/agent-hands/main/install.sh | bash
 \`\`\`
 
-### Docker
-
-\`\`\`bash
-docker pull ghcr.io/zobite/agent-hands:${TAG}
-\`\`\`
-
 ---
 
 See [README](https://github.com/Zobite/agent-hands#readme) for full documentation."

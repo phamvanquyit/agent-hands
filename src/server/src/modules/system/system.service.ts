@@ -49,10 +49,11 @@ export function getCurrentVersion(): string {
 }
 
 
-/** Cache: latest version fetched from npm registry */
+/** Cache: latest version fetched from GitHub Releases */
 let _cachedLatest: string | null = null;
 let _cachedAt = 0;
 const CACHE_TTL_MS = 60_000; // 1 minute
+const GITHUB_REPO = process.env.GITHUB_REPO || "Zobite/agent-hands";
 
 export async function checkLatestVersion(): Promise<string | null> {
   const now = Date.now();
@@ -61,13 +62,14 @@ export async function checkLatestVersion(): Promise<string | null> {
   }
 
   try {
-    const res = await fetch("https://registry.npmjs.org/agent-hands/latest", {
-      headers: { Accept: "application/json" },
+    const res = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, {
+      headers: { Accept: "application/vnd.github+json" },
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return _cachedLatest;
-    const data = (await res.json()) as { version?: string };
-    _cachedLatest = data.version ?? null;
+    const data = (await res.json()) as { tag_name?: string };
+    // tag_name is "v0.2.9" → strip the "v" prefix
+    _cachedLatest = data.tag_name?.replace(/^v/, "") ?? null;
     _cachedAt = now;
     return _cachedLatest;
   } catch {
@@ -94,19 +96,21 @@ export async function getVersionInfo(): Promise<VersionResponse> {
 
 /**
  * Performs the actual update:
- * 1. Runs `bun add -g agent-hands@latest`
+ * 1. Runs the install.sh script from GitHub (same as initial install)
  * 2. Exits with code 1 → monitor process auto-restarts with the new binary
  */
 export async function performUpdate(): Promise<{ ok: boolean; message: string }> {
   try {
-    const proc = Bun.spawn(["bun", "add", "-g", "agent-hands@latest"], {
+    const installUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/install.sh`;
+    const proc = Bun.spawn(["bash", "-c", `curl -fsSL ${installUrl} | bash`], {
       stdout: "inherit",
       stderr: "inherit",
+      env: { ...process.env },
     });
 
     const exitCode = await proc.exited;
     if (exitCode !== 0) {
-      return { ok: false, message: `bun add failed with exit code ${exitCode}` };
+      return { ok: false, message: `Install script failed with exit code ${exitCode}` };
     }
 
     // Schedule restart after response is sent (500ms delay)
@@ -122,7 +126,8 @@ export async function performUpdate(): Promise<{ ok: boolean; message: string }>
   }
 }
 
-/** Invalidate npm version cache (force re-check) */
+/** Invalidate version cache (force re-check) */
 export function invalidateVersionCache() {
   _cachedAt = 0;
 }
+

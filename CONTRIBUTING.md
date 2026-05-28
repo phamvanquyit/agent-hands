@@ -60,7 +60,6 @@ agent-hands/
 │           └── modules/           # Feature modules (mirrors server)
 ├── bin/                           # CLI entry point
 ├── docs/                          # Feature documentation & specs
-├── docker/                        # Docker configs
 └── public/                        # Bundled web assets (production)
 ```
 

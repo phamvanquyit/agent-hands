@@ -417,7 +417,6 @@ agent-hands/
 │           └── modules/           # Feature modules (mirror of server)
 ├── bin/                           # CLI entry point
 ├── docs/                          # Feature documentation & specs
-├── docker/                        # Docker configs
 └── public/                        # Bundled web assets (production)
 ```
 
@@ -434,24 +433,6 @@ src/server/src/modules/my-feature/
 ```
 
 Modules are auto-loaded — no need to modify `app.ts`.
-
----
-
-## Docker
-
-```bash
-# Using docker-compose (recommended)
-cd docker
-docker compose up -d
-
-# Or build manually
-docker build -t agent-hands -f docker/Dockerfile .
-docker run -d \
-  -p 18080:18080 \
-  -v ./data:/data \
-  -e DATA_DIR=/data \
-  agent-hands
-```
 
 ---
 
