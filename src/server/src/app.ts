@@ -171,6 +171,26 @@ export async function createApp() {
 
   app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024 * 1024 } });
 
+  // ── Handle empty application/json bodies gracefully without throwing ──────
+  app.addContentTypeParser(
+    "application/json",
+    { parseAs: "string" },
+    (_req, body, done) => {
+      const text = typeof body === "string" ? body.trim() : "";
+      if (text === "") {
+        done(null, {});
+        return;
+      }
+      try {
+        const json = JSON.parse(text);
+        done(null, json);
+      } catch (err) {
+        (err as any).statusCode = 400;
+        done(err as Error, undefined);
+      }
+    }
+  );
+
   // ── Binary content-type fallback (fix 415 on file upload) ────────────────
   app.addContentTypeParser(
     /^(?!application\/json|multipart\/).*$/,

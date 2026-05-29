@@ -526,6 +526,40 @@ describe("KV Store — Delete (DELETE /api/kv-store/:id)", () => {
     expect(getRes.status).toBe(400);
   });
 
+  test("delete by key successfully", async () => {
+    const { data } = await createVar({
+      key: "test.delete.bykey",
+      value: "delete-me-bykey",
+    });
+
+    const res = await fetch(`${API}/by-key/test.delete.bykey`, {
+      method: "DELETE",
+      headers: authHeader(),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.key).toBe("test.delete.bykey");
+    expect(body.deleted).toBe(true);
+
+    // Remove from tracked IDs
+    const idx = createdIds.indexOf(data.id);
+    if (idx > -1) createdIds.splice(idx, 1);
+
+    // Verify gone
+    const getRes = await fetch(`${API}/by-key/test.delete.bykey`, {
+      headers: authHeader(),
+    });
+    expect(getRes.status).toBe(400);
+  });
+
+  test("delete non-existent key by-key → 400", async () => {
+    const res = await fetch(`${API}/by-key/test.delete.nonexistent`, {
+      method: "DELETE",
+      headers: authHeader(),
+    });
+    expect(res.status).toBe(400);
+  });
+
   test("delete without auth → 401", async () => {
     const res = await fetch(`${API}/var_any`, {
       method: "DELETE",

@@ -1,5 +1,5 @@
 import { Tooltip } from "antd";
-import { BookOpen, Bot, Database, FileText, HardDrive, Key, KeyRound, LayoutDashboard, LogOut, Plug, Settings, Table2, Users } from "lucide-react";
+import { BookOpen, Bot, Database, FileText, HardDrive, Key, KeyRound, LayoutDashboard, LogOut, Plug, Settings, Table2, Users, Zap } from "lucide-react";
 import type React from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { AgentHandsLogo } from "src/common/components/AgentHandsLogo";
@@ -22,6 +22,7 @@ const navIcons: Record<string, React.ReactNode> = {
   "hard-drive": <HardDrive size={16} strokeWidth={2} />,
   database: <Database size={16} strokeWidth={2} />,
   plug: <Plug size={16} strokeWidth={2} />,
+  zap: <Zap size={16} strokeWidth={2} />,
 };
 
 type NavItem = {
@@ -36,7 +37,7 @@ function NavGroup({
   items,
   userRole,
 }: {
-  label: string;
+  label?: string;
   items: NavItem[];
   userRole: string;
 }) {
@@ -49,7 +50,11 @@ function NavGroup({
 
   return (
     <div className="flex flex-col gap-1 mb-6">
-      <div className="font-mono text-[11px] font-medium uppercase tracking-[0.8px] text-muted-soft px-3 mb-1 select-none hidden md:block">{label}</div>
+      {label && (
+        <div className="font-mono text-[11px] font-medium uppercase tracking-[0.8px] text-muted-soft px-3 mb-1 select-none hidden md:block">
+          {label}
+        </div>
+      )}
       {visibleItems.map((item) => (
         <NavLink
           key={item.path}
@@ -109,7 +114,7 @@ export default function AppLayout() {
 
         {/* Navigation */}
         <nav className="flex-1 p-3 flex flex-col gap-1 overflow-y-auto">
-          <NavGroup label="Workspace" items={mainNavItems} userRole={userRole} />
+          <NavGroup items={mainNavItems} userRole={userRole} />
           <div className="flex-1 min-h-[16px]" />
           <NavGroup label="Administration" items={adminNavItems} userRole={userRole} />
         </nav>

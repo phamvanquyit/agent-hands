@@ -130,7 +130,7 @@ export function registerDynamicApiRoutes(app: FastifyInstance) {
     }
   );
 
-  // POST /:id/test — dry-run: execute provided code directly (not saved code)
+  // POST /:id/test — dry-run: execute code from DB (draft or prod)
   r.post(
     "/:id/test",
     {
@@ -146,24 +146,28 @@ export function registerDynamicApiRoutes(app: FastifyInstance) {
           .send({ error: "not_found", message: "API endpoint not found" });
 
       const input = req.body as DryRunBody;
+
+      // Pick code based on source: "prod" = official code, "draft" = draftCode (fallback to code)
+      const codeToTest = input.source === "prod" ? existing.code : (existing.draftCode ?? existing.code);
+
       const startTime = Date.now();
 
       const requestObj = {
-        method: input.method,
-        path: input.path,
+        method: existing.method,
+        path: existing.path,
         params: input.params ?? {},
         query: input.query ?? {},
         headers: input.headers ?? {},
         body: input.body ?? null,
       };
 
-      const needsIsolation = hasNpmImports(input.code);
+      const needsIsolation = hasNpmImports(codeToTest);
 
       if (needsIsolation) {
         // Isolated mode: run in subprocess
         const result = await executeIsolated({
           apiId: id,
-          code: input.code,
+          code: codeToTest,
           request: requestObj,
           timeoutMs: input.timeout ?? 30000,
         });
@@ -192,7 +196,7 @@ export function registerDynamicApiRoutes(app: FastifyInstance) {
       };
 
       try {
-        const cleanCode = input.code
+        const cleanCode = codeToTest
           .replace(/export\s+default\s+/g, "")
           .replace(/module\.exports\s*=\s*/g, "");
 

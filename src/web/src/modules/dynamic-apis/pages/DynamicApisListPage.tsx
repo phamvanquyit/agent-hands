@@ -5,6 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { API_BASE, client } from "src/lib/client";
 import { AgentHandsError } from "src/lib/http";
 import type { CreateDynamicApiInput, DynamicApiItem } from "src/lib/types";
+import DynamicApiDocsModal from "../components/DynamicApiDocsModal";
 
 const { confirm } = Modal;
 
@@ -114,13 +115,16 @@ export default function DynamicApisListPage() {
         </div>
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
           <h1 className="font-display text-[32px] font-normal text-ink tracking-[-0.64px] m-0 leading-tight">Dynamic APIs</h1>
-          <button
-            className="flex items-center gap-2 h-[36px] px-4 rounded-md bg-ink text-canvas font-medium text-[13px] hover:bg-opacity-90 transition-opacity cursor-pointer border-none"
-            onClick={() => setCreateModalOpen(true)}
-          >
-            <Plus size={16} />
-            New API
-          </button>
+          <div className="flex items-center gap-3">
+            <DynamicApiDocsModal />
+            <button
+              className="flex items-center gap-2 h-[36px] px-4 rounded-md bg-ink text-canvas font-medium text-[13px] hover:bg-opacity-90 transition-opacity cursor-pointer border-none"
+              onClick={() => setCreateModalOpen(true)}
+            >
+              <Plus size={16} />
+              New API
+            </button>
+          </div>
         </div>
       </div>
 

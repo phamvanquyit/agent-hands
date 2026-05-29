@@ -198,6 +198,7 @@ export const dynamicApis = sqliteTable("dynamic_apis", {
   path: text("path").notNull(),              // e.g. /users/:id
   description: text("description"),
   code: text("code").notNull().default(""),   // JS/TS source code
+  draftCode: text("draft_code"),             // AI-generated draft code (pending review)
   dependencies: text("dependencies"),         // JSON: { "axios": "^1.7.0" } or null
   isActive: int("is_active").notNull().default(1),
   timeout: int("timeout").notNull().default(30000),  // ms

@@ -16,7 +16,6 @@ import {
   Play,
   Search,
   Sparkles,
-  User,
   X,
   XCircle,
 } from "lucide-react";
@@ -85,7 +84,7 @@ interface AiCodingPanelProps {
   method: string;
   path: string;
   currentCode: string;
-  onApplyCode: (code: string) => void;
+  onApplyCode: (code: string, isFinal?: boolean) => void;
 }
 
 // ── Timeline step types ───────────────────────────────────────────────────────
@@ -178,14 +177,14 @@ function eventsToTimeline(events: AgentEvent[], isLive = false): TimelineStep[] 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const TOOL_LABEL: Record<string, string> = {
-  update_code: "Update code",
-  test_code: "Test code",
+  write_code: "Write code",
+  run_test: "Run test",
   fetch_web: "Fetch URL",
 };
 
 const TOOL_ICON: Record<string, typeof Pen> = {
-  update_code: Pen,
-  test_code: Play,
+  write_code: Pen,
+  run_test: Play,
   fetch_web: Globe,
 };
 
@@ -267,7 +266,7 @@ function ToolDetail({ step }: { step: Extract<TimelineStep, { kind: "tool" }> })
   const [open, setOpen] = useState(false);
 
   const testStatus =
-    step.name === "test_code" && !step.running && step.result != null
+    step.name === "run_test" && !step.running && step.result != null
       ? (() => {
           const r = step.result as Record<string, unknown>;
           const status = r?.status as number | undefined;
@@ -281,7 +280,7 @@ function ToolDetail({ step }: { step: Extract<TimelineStep, { kind: "tool" }> })
   const argsSummary = (() => {
     const args = step.args;
     if (!args || Object.keys(args).length === 0) return null;
-    if (step.name === "test_code") {
+    if (step.name === "run_test") {
       // args.code may be a placeholder like "(1365 chars)" — extract the number
       if (typeof args.code === "string") {
         const match = args.code.match(/\((\d+)\s*chars\)/);
@@ -291,7 +290,7 @@ function ToolDetail({ step }: { step: Extract<TimelineStep, { kind: "tool" }> })
       return null;
     }
     if (step.name === "fetch_web") return (args.url as string) || "";
-    if (step.name === "update_code") {
+    if (step.name === "write_code") {
       const len = typeof args.code === "string" ? args.code.length : 0;
       return `${len} chars`;
     }
@@ -300,8 +299,8 @@ function ToolDetail({ step }: { step: Extract<TimelineStep, { kind: "tool" }> })
 
   const resultSummary = (() => {
     if (step.running || step.result == null) return null;
-    if (step.name === "update_code") return "✓ saved";
-    if (step.name === "test_code" && typeof step.result === "object") {
+    if (step.name === "write_code") return "✓ saved";
+    if (step.name === "run_test" && typeof step.result === "object") {
       const r = step.result as Record<string, unknown>;
       const status = r.status as number | undefined;
       return status != null ? `Status ${status}` : null;
@@ -336,7 +335,7 @@ function ToolDetail({ step }: { step: Extract<TimelineStep, { kind: "tool" }> })
             {!step.running && step.result != null && (
               <div>
                 <span className="font-mono text-[10px] text-muted-soft uppercase tracking-wider">Output</span>
-                {step.name === "test_code" && typeof step.result === "object" ? (
+                {step.name === "run_test" && typeof step.result === "object" ? (
                   <TestResultDetail result={step.result as Record<string, unknown>} />
                 ) : (
                   <pre className="font-mono text-[11px] leading-[1.4] text-body whitespace-pre-wrap m-0 mt-0.5 max-h-[140px] overflow-y-auto">
@@ -726,9 +725,43 @@ export function AiCodingPanel({ apiId, method, path, currentCode, onApplyCode }:
   const buildHistory = useCallback(
     (): Array<{ role: "user" | "assistant"; content: string }> =>
       chatMessages.map((msg) => {
-        if (msg.role === "assistant" && msg.code) {
-          const codeBlock = `\n\n\`\`\`javascript\n${msg.code}\n\`\`\``;
-          return { role: msg.role, content: msg.content + codeBlock };
+        if (msg.role === "assistant") {
+          let content = "";
+
+          // Summarize tool actions so model understands what happened
+          if (msg.events && msg.events.length > 0) {
+            const actions: string[] = [];
+            for (let i = 0; i < msg.events.length; i++) {
+              const ev = msg.events[i];
+              if (ev.type === "tool_call" && ev.toolName === "write_code") {
+                actions.push("- Called write_code to save code draft");
+              } else if (ev.type === "tool_call" && ev.toolName === "run_test") {
+                // Find matching tool_result
+                const resultEv = msg.events.slice(i + 1).find((e) => e.type === "tool_result" && e.toolName === "run_test");
+                if (resultEv && typeof resultEv.toolResult === "object" && resultEv.toolResult !== null) {
+                  const r = resultEv.toolResult as Record<string, unknown>;
+                  const status = r.status as number | undefined;
+                  const hasError = !!r.error;
+                  const passed = !hasError && status != null && status < 400;
+                  actions.push(`- Called run_test → ${passed ? "PASSED" : "FAILED"} (Status ${status ?? "?"})${r.executionTimeMs ? ` (${r.executionTimeMs}ms)` : ""}`);
+                } else {
+                  actions.push("- Called run_test");
+                }
+              } else if (ev.type === "tool_call" && ev.toolName === "fetch_web") {
+                const url = ev.toolArgs?.url;
+                actions.push(`- Called fetch_web: ${url || "unknown URL"}`);
+              }
+            }
+            if (actions.length > 0) {
+              content += `Actions performed:\n${actions.join("\n")}\n\n`;
+            }
+          }
+
+          if (msg.content) content += msg.content;
+          if (msg.code) content += `\n\n\`\`\`javascript\n${msg.code}\n\`\`\``;
+          if (msg.cancelled) content += "\n\n(Cancelled by user)";
+
+          return { role: msg.role, content: content || "Done." };
         }
         return { role: msg.role, content: msg.content };
       }),
@@ -816,7 +849,11 @@ export function AiCodingPanel({ apiId, method, path, currentCode, onApplyCode }:
             collectedEvents.push(event);
             setCurrentEvents((prev) => [...prev, event]);
 
-            if (event.code) finalCode = event.code;
+            if (event.code) {
+              finalCode = event.code;
+              latestCodeRef.current = finalCode;
+              onApplyCode(finalCode);
+            }
             if (event.type === "text_delta" && event.message) {
               // Accumulate streaming text deltas
               assistantText += event.message;
@@ -905,11 +942,16 @@ export function AiCodingPanel({ apiId, method, path, currentCode, onApplyCode }:
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-canvas">
-      {/* Header */}
-      <div className="shrink-0 px-4 py-3 border-b border-hairline">
+      <div className="shrink-0 px-2 py-3 border-b border-hairline">
         <div className="flex items-center gap-2 mb-2.5">
-          <span className="font-mono text-[11px] uppercase tracking-[0.88px] text-muted-soft font-semibold">AI AGENT</span>
-          {running && <span className="font-mono text-[11px] text-amber-400/80 tabular-nums">{elapsedStr}</span>}
+          {running && (
+            <span className="relative flex h-[7px] w-[7px]">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-[7px] w-[7px] bg-amber-500" />
+            </span>
+          )}
+          <span className={`font-mono text-[11px] uppercase tracking-[0.88px] font-semibold transition-colors ${running ? "text-amber-500" : "text-muted-soft"}`}>AI AGENT</span>
+          {running && <span className="font-mono text-[11px] text-amber-400/80 tabular-nums ml-auto">{elapsedStr}</span>}
         </div>
         <ModelPickerPopover
           providers={providers}
@@ -923,8 +965,27 @@ export function AiCodingPanel({ apiId, method, path, currentCode, onApplyCode }:
         />
       </div>
 
-      {/* Chat */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      {/* Indeterminate progress bar */}
+      <div className="shrink-0 h-[2px] bg-hairline overflow-hidden">
+        {running && (
+          <div
+            className="h-full w-1/3 rounded-full bg-amber-400"
+            style={{
+              animation: "ai-progress-slide 1.4s ease-in-out infinite",
+            }}
+          />
+        )}
+      </div>
+
+      <style>{`
+        @keyframes ai-progress-slide {
+          0%   { transform: translateX(-100%) scaleX(1); }
+          50%  { transform: translateX(150%) scaleX(1.5); }
+          100% { transform: translateX(400%) scaleX(1); }
+        }
+      `}</style>
+
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-2 py-4 space-y-4">
         {chatMessages.length === 0 && !running && (
           <div className="flex flex-col items-center justify-center h-full text-center">
             <div className="w-14 h-14 rounded-lg border border-dashed border-hairline-strong flex items-center justify-center mb-4">
@@ -938,14 +999,9 @@ export function AiCodingPanel({ apiId, method, path, currentCode, onApplyCode }:
         {chatMessages.map((msg, i) => (
           <div key={`msg-${msg.role}-${msg.content.slice(0, 20)}-${i}`}>
             {msg.role === "user" ? (
-              <div className="flex gap-2.5 items-start">
-                <div className="shrink-0 w-7 h-7 rounded-full bg-surface-strong flex items-center justify-center mt-0.5">
-                  <User size={14} className="text-muted" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="font-mono text-[12px] text-ink leading-[1.6] bg-surface-card border border-hairline rounded-lg px-3.5 py-2.5 whitespace-pre-wrap">
-                    {msg.content}
-                  </div>
+              <div className="flex-1 min-w-0">
+                <div className="font-mono text-[12px] text-ink leading-[1.6] bg-surface-card border border-hairline rounded-lg px-3.5 py-2.5 whitespace-pre-wrap">
+                  {msg.content}
                 </div>
               </div>
             ) : (
@@ -967,9 +1023,8 @@ export function AiCodingPanel({ apiId, method, path, currentCode, onApplyCode }:
         )}
       </div>
 
-      {/* Input */}
-      <div className="shrink-0 px-4 py-3 border-t border-hairline">
-        <div className="relative">
+      <div className="shrink-0 px-2 py-2 bg-canvas">
+        <div className={`relative flex items-stretch bg-surface-card border rounded-lg focus-within:border-hairline-strong transition-colors overflow-hidden ${running ? "border-amber-500/30" : "border-hairline"}`}>
           <textarea
             ref={textareaRef}
             value={prompt}
@@ -980,30 +1035,32 @@ export function AiCodingPanel({ apiId, method, path, currentCode, onApplyCode }:
                 handleRun();
               }
             }}
-            placeholder={chatMessages.length > 0 ? "Follow up…" : "Describe what to build…"}
-            className="w-full font-mono text-[12px] leading-[1.5] bg-surface-card text-ink pl-3 pr-12 py-2.5 rounded-md border border-hairline resize-none outline-none placeholder:text-muted-soft focus:border-hairline-strong transition-colors"
-            rows={1}
+            placeholder={running ? "" : chatMessages.length > 0 ? "Follow up…" : "Describe what to build…"}
+            className="w-full font-mono text-[12px] leading-[1.5] bg-transparent text-ink pl-3.5 pr-12 py-3.5 resize-none border-none outline-none focus:outline-none focus:ring-0 placeholder:text-muted-soft"
+            rows={2}
             spellCheck={false}
             disabled={running}
-            style={{ minHeight: "40px", maxHeight: "160px" }}
+            style={{ minHeight: "52px", maxHeight: "120px" }}
           />
-          <div className="absolute right-2 bottom-2">
+          <div className="absolute right-2 bottom-2 z-10 flex items-center">
             {running ? (
               <button
+                type="button"
                 onClick={handleStop}
                 className="inline-flex items-center justify-center w-[30px] h-[30px] rounded-md bg-semantic-error text-on-primary cursor-pointer border-none hover:opacity-90 transition-opacity"
                 title="Abort"
               >
-                <X size={15} />
+                <X size={14} />
               </button>
             ) : (
               <button
+                type="button"
                 onClick={handleRun}
                 disabled={!prompt.trim() || !selectedModel}
                 className="inline-flex items-center justify-center w-[30px] h-[30px] rounded-md bg-ink text-canvas cursor-pointer border-none hover:opacity-90 transition-opacity disabled:opacity-20"
                 title="Execute (Enter)"
               >
-                <ArrowRight size={15} />
+                <ArrowRight size={14} />
               </button>
             )}
           </div>

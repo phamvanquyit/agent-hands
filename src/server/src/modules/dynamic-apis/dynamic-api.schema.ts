@@ -38,6 +38,7 @@ export const updateDynamicApiBodySchema = z.object({
     .optional(),
   description: z.string().max(2000).nullable().optional(),
   code: z.string().optional(),
+  draftCode: z.string().nullable().optional(),
   dependencies: z.record(z.string()).nullable().optional(),
   isActive: z.boolean().optional(),
   isPublic: z.boolean().optional(),
@@ -61,9 +62,7 @@ export const listDynamicApiLogsQuerySchema = z.object({
 });
 
 export const dryRunBodySchema = z.object({
-  code: z.string().min(1),
-  method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).default("GET"),
-  path: z.string().default("/"),
+  source: z.enum(["prod", "draft"]).default("draft"),
   params: z.record(z.string()).optional().default({}),
   query: z.record(z.string()).optional().default({}),
   headers: z.record(z.string()).optional().default({}),

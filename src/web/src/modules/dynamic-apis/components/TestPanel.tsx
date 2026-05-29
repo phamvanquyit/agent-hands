@@ -1,6 +1,6 @@
 import { Input, Tooltip, message } from "antd";
-import { Copy, History, Loader2, Plus, Send, Trash2, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Copy, Loader2, Plus, Send, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 interface TestResult {
   status: number;
@@ -9,18 +9,6 @@ interface TestResult {
   executionTimeMs?: number;
   error?: string;
   time?: number;
-}
-
-interface HistoryEntry {
-  id: number;
-  method: string;
-  path: string;
-  timestamp: number;
-  params: Record<string, string>;
-  query: Record<string, string>;
-  headers: Record<string, string>;
-  body: string;
-  result: TestResult;
 }
 
 interface TestPanelProps {
@@ -68,6 +56,14 @@ const METHOD_COLORS: Record<string, string> = {
 
 // ── Key-Value Editor ────────────────────────────────────────────────────────
 
+interface KeyValueEntry {
+  id: string;
+  key: string;
+  value: string;
+}
+
+const generateId = () => Math.random().toString(36).substring(2, 9);
+
 function KeyValueEditor({
   entries,
   onChange,
@@ -75,24 +71,22 @@ function KeyValueEditor({
   placeholderValue,
   readOnlyKeys,
 }: {
-  entries: [string, string][];
-  onChange: (entries: [string, string][]) => void;
+  entries: KeyValueEntry[];
+  onChange: (entries: KeyValueEntry[]) => void;
   placeholderKey?: string;
   placeholderValue?: string;
   readOnlyKeys?: boolean;
 }) {
   const addEntry = () => {
-    onChange([...entries, ["", ""]]);
+    onChange([...entries, { id: generateId(), key: "", value: "" }]);
   };
 
-  const updateEntry = (index: number, key: string, value: string) => {
-    const next = [...entries];
-    next[index] = [key, value];
-    onChange(next);
+  const updateEntry = (id: string, key: string, value: string) => {
+    onChange(entries.map((entry) => (entry.id === id ? { ...entry, key, value } : entry)));
   };
 
-  const removeEntry = (index: number) => {
-    onChange(entries.filter((_, i) => i !== index));
+  const removeEntry = (id: string) => {
+    onChange(entries.filter((entry) => entry.id !== id));
   };
 
   return (
@@ -110,11 +104,11 @@ function KeyValueEditor({
         </div>
       )}
 
-      {entries.map(([key, value], i) => (
-        <div key={i} className="flex gap-2 items-center">
+      {entries.map(({ id, key, value }) => (
+        <div key={id} className="flex gap-2 items-center">
           <Input
             value={key}
-            onChange={(e) => updateEntry(i, e.target.value, value)}
+            onChange={(e) => updateEntry(id, e.target.value, value)}
             placeholder={placeholderKey ?? "key"}
             size="small"
             className="font-mono text-[12px]"
@@ -124,7 +118,7 @@ function KeyValueEditor({
           />
           <Input
             value={value}
-            onChange={(e) => updateEntry(i, key, e.target.value)}
+            onChange={(e) => updateEntry(id, key, e.target.value)}
             placeholder={placeholderValue ?? "value"}
             size="small"
             className="font-mono text-[12px]"
@@ -132,7 +126,7 @@ function KeyValueEditor({
           />
           {!readOnlyKeys ? (
             <button
-              onClick={() => removeEntry(i)}
+              onClick={() => removeEntry(id)}
               className="shrink-0 inline-flex items-center justify-center w-6 h-6 bg-transparent border-none text-muted-soft hover:text-red-400 cursor-pointer p-0 transition-colors"
             >
               <Trash2 size={12} />
@@ -212,15 +206,12 @@ type ResponseTab = "body" | "console" | "error";
 
 // ── Main Component ──────────────────────────────────────────────────────────
 
-const MAX_HISTORY = 10;
-let nextHistoryId = 1;
-
 export function TestPanel({ method, path, testBody, onTestBodyChange, testing, testResult, onSend, baseUrl = "" }: TestPanelProps) {
   const showRequestBody = ["POST", "PUT", "PATCH"].includes(method);
   const pathParamNames = useMemo(() => extractPathParams(path), [path]);
 
   const [paramEntries, setParamEntries] = useState<[string, string][]>(pathParamNames.map((name) => [name, ""]));
-  const [queryEntries, setQueryEntries] = useState<[string, string][]>([]);
+  const [queryEntries, setQueryEntries] = useState<KeyValueEntry[]>([]);
 
   // Sync path param fields when the path pattern changes
   useEffect(() => {
@@ -229,63 +220,31 @@ export function TestPanel({ method, path, testBody, onTestBodyChange, testing, t
       return pathParamNames.map((name) => [name, prevMap[name] ?? ""]);
     });
   }, [pathParamNames]);
-  const [headerEntries, setHeaderEntries] = useState<[string, string][]>([]);
+  const [headerEntries, setHeaderEntries] = useState<KeyValueEntry[]>([]);
 
   // Tabs
   const [activeRequestTab, setActiveRequestTab] = useState<RequestTab>(pathParamNames.length > 0 ? "params" : showRequestBody ? "body" : "params");
   const [activeResponseTab, setActiveResponseTab] = useState<ResponseTab>("body");
 
-  // History state
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
-  const [showHistory, setShowHistory] = useState(false);
-
   const handleSend = useCallback(() => {
     const params = Object.fromEntries(paramEntries.filter(([k]) => k));
-    const query = Object.fromEntries(queryEntries.filter(([k]) => k));
-    const headers = Object.fromEntries(headerEntries.filter(([k]) => k));
+    const query = Object.fromEntries(queryEntries.filter((e) => e.key).map((e) => [e.key, e.value]));
+    const headers = Object.fromEntries(headerEntries.filter((e) => e.key).map((e) => [e.key, e.value]));
     onSend(params, query, headers);
   }, [paramEntries, queryEntries, headerEntries, onSend]);
 
-  // Save to history when testResult changes
-  const lastSavedResultRef = useRef<TestResult | null>(null);
-  useEffect(() => {
-    if (testResult && testResult !== lastSavedResultRef.current && !testing) {
-      lastSavedResultRef.current = testResult;
-      const entry: HistoryEntry = {
-        id: nextHistoryId++,
-        method,
-        path,
-        timestamp: Date.now(),
-        params: Object.fromEntries(paramEntries.filter(([k]) => k)),
-        query: Object.fromEntries(queryEntries.filter(([k]) => k)),
-        headers: Object.fromEntries(headerEntries.filter(([k]) => k)),
-        body: testBody,
-        result: testResult,
-      };
-      setHistory((prev) => [entry, ...prev].slice(0, MAX_HISTORY));
-    }
-  }, [testResult, testing, method, path, paramEntries, queryEntries, headerEntries, testBody]);
-
   const handleCopyCurl = () => {
     const params = Object.fromEntries(paramEntries.filter(([k]) => k));
-    const query = Object.fromEntries(queryEntries.filter(([k]) => k));
-    const headers = Object.fromEntries(headerEntries.filter(([k]) => k));
+    const query = Object.fromEntries(queryEntries.filter((e) => e.key).map((e) => [e.key, e.value]));
+    const headers = Object.fromEntries(headerEntries.filter((e) => e.key).map((e) => [e.key, e.value]));
     const curl = buildCurlCommand(method, baseUrl, path, params, query, headers, testBody);
     navigator.clipboard.writeText(curl);
     message.success("cURL copied to clipboard");
   };
 
-  const restoreEntry = (entry: HistoryEntry) => {
-    setParamEntries(Object.entries(entry.params));
-    setQueryEntries(Object.entries(entry.query));
-    setHeaderEntries(Object.entries(entry.headers));
-    onTestBodyChange(entry.body);
-    setShowHistory(false);
-  };
-
   // Count badges
-  const paramCount = pathParamNames.length + queryEntries.filter(([k]) => k).length;
-  const headerCount = headerEntries.filter(([k]) => k).length;
+  const paramCount = queryEntries.filter((e) => e.key).length;
+  const headerCount = headerEntries.filter((e) => e.key).length;
   const methodColor = METHOD_COLORS[method] ?? "#807d72";
 
   return (
@@ -306,10 +265,66 @@ export function TestPanel({ method, path, testBody, onTestBodyChange, testing, t
           {method}
         </div>
 
-        {/* URL Preview */}
+        {/* URL Preview with inline param editing */}
         <div className="flex-1 flex items-center gap-0 bg-surface-card border border-hairline rounded-md overflow-hidden">
           <span className="font-mono text-[11px] text-muted-soft px-2.5 py-1.5 bg-canvas border-r border-hairline shrink-0">{baseUrl}/apis</span>
-          <span className="font-mono text-[12px] text-ink px-2.5 py-1.5 truncate flex-1">{path}</span>
+          <div className="flex items-center py-0.5 px-1 flex-1 overflow-x-auto gap-0">
+            {path
+              .split("/")
+              .filter(Boolean)
+              .map((segment, i, arr) => {
+                const isParam = segment.startsWith(":");
+                const paramName = isParam ? segment.slice(1) : "";
+                const paramValue = isParam ? (paramEntries.find(([k]) => k === paramName)?.[1] ?? "") : "";
+                const subPath = "/" + arr.slice(0, i + 1).join("/");
+                return (
+                  <span key={subPath} className="flex items-center shrink-0">
+                    <span className="font-mono text-[12px] text-muted-soft">/</span>
+                    {isParam ? (
+                      <input
+                        value={paramValue}
+                        onChange={(e) => {
+                          setParamEntries((prev) => prev.map(([k, v]) => (k === paramName ? [k, e.target.value] : [k, v])));
+                        }}
+                        placeholder={paramName}
+                        className="font-mono text-[12px] text-[#8b5cf6] rounded px-1 py-0 outline-none transition-colors"
+                        style={{
+                          width: Math.max(50, (paramValue || paramName).length * 7.2 + 8),
+                          background: "rgba(139,92,246,0.06)",
+                          border: "1px solid rgba(139,92,246,0.2)",
+                        }}
+                        onFocus={(e) => {
+                          e.currentTarget.style.borderColor = "rgba(139,92,246,0.5)";
+                          e.currentTarget.style.background = "rgba(139,92,246,0.1)";
+                        }}
+                        onBlur={(e) => {
+                          e.currentTarget.style.borderColor = "rgba(139,92,246,0.2)";
+                          e.currentTarget.style.background = "rgba(139,92,246,0.06)";
+                        }}
+                      />
+                    ) : (
+                      <span className="font-mono text-[12px] text-ink">{segment}</span>
+                    )}
+                  </span>
+                );
+              })}
+            {/* Query string preview */}
+            {queryEntries.filter((e) => e.key).length > 0 && (
+              <span className="flex items-center shrink-0">
+                <span className="font-mono text-[12px] text-[#f59e0b]">?</span>
+                {queryEntries
+                  .filter((e) => e.key)
+                  .map(({ id, key, value }, i, arr) => (
+                    <span key={id} className="flex items-center shrink-0">
+                      <span className="font-mono text-[12px] text-[#f59e0b]">{key}</span>
+                      <span className="font-mono text-[12px] text-muted-soft">=</span>
+                      <span className="font-mono text-[12px] text-ink">{value}</span>
+                      {i < arr.length - 1 && <span className="font-mono text-[12px] text-[#f59e0b]">&</span>}
+                    </span>
+                  ))}
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Actions */}
@@ -322,18 +337,7 @@ export function TestPanel({ method, path, testBody, onTestBodyChange, testing, t
               <Copy size={13} />
             </button>
           </Tooltip>
-          <Tooltip title={`History (${history.length})`}>
-            <button
-              onClick={() => setShowHistory(!showHistory)}
-              className={`inline-flex items-center justify-center w-[32px] h-[32px] rounded-md border transition-colors cursor-pointer ${
-                showHistory
-                  ? "bg-[#8b5cf610] text-[#8b5cf6] border-[#8b5cf640]"
-                  : "bg-transparent border-hairline text-muted-soft hover:text-ink hover:border-hairline-strong"
-              }`}
-            >
-              <History size={13} />
-            </button>
-          </Tooltip>
+
           <button
             onClick={handleSend}
             disabled={testing}
@@ -355,42 +359,6 @@ export function TestPanel({ method, path, testBody, onTestBodyChange, testing, t
           </button>
         </div>
       </div>
-
-      {/* ═══ History Dropdown ═══ */}
-      {showHistory && (
-        <div className="shrink-0 border-b border-hairline bg-canvas max-h-[200px] overflow-y-auto">
-          <div className="flex items-center justify-between px-5 py-2 border-b border-hairline sticky top-0 bg-canvas z-10">
-            <span className="font-mono text-[10px] text-muted-soft uppercase tracking-wider">Recent Requests ({history.length})</span>
-            <button
-              onClick={() => setShowHistory(false)}
-              className="text-muted-soft hover:text-ink transition-colors bg-transparent border-none cursor-pointer p-0"
-            >
-              <X size={12} />
-            </button>
-          </div>
-          {history.length === 0 ? (
-            <div className="px-5 py-4 text-center font-mono text-[11px] text-muted-soft">No history yet</div>
-          ) : (
-            history.map((entry) => (
-              <button
-                key={entry.id}
-                onClick={() => restoreEntry(entry)}
-                className="w-full flex items-center gap-3 px-5 py-2.5 hover:bg-surface-card transition-colors cursor-pointer bg-transparent border-none text-left"
-              >
-                <span className="font-mono text-[11px] font-bold shrink-0" style={{ color: getStatusColor(entry.result.status), minWidth: 32 }}>
-                  {entry.result.status}
-                </span>
-                <span className="font-mono text-[10px] font-semibold shrink-0" style={{ color: METHOD_COLORS[entry.method] ?? "#807d72", minWidth: 38 }}>
-                  {entry.method}
-                </span>
-                <span className="font-mono text-[11px] text-ink truncate flex-1">{entry.path}</span>
-                <span className="font-mono text-[10px] text-muted-soft shrink-0">{entry.result.executionTimeMs ?? 0}ms</span>
-                <span className="font-mono text-[10px] text-muted-soft shrink-0">{new Date(entry.timestamp).toLocaleTimeString()}</span>
-              </button>
-            ))
-          )}
-        </div>
-      )}
 
       {/* ═══ Content: Request + Response ═══ */}
       <div className="flex-1 flex flex-col overflow-hidden">
@@ -429,17 +397,6 @@ export function TestPanel({ method, path, testBody, onTestBodyChange, testing, t
           <div className="overflow-y-auto px-5 py-3" style={{ maxHeight: 220 }}>
             {activeRequestTab === "params" && (
               <div className="space-y-4">
-                {/* Path params (auto) */}
-                {pathParamNames.length > 0 && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="font-mono text-[10px] text-muted-soft uppercase tracking-wider">Path Parameters</span>
-                      <span className="font-mono text-[9px] text-[#8b5cf6] bg-[#8b5cf620] px-1.5 py-0.5 rounded">auto-detected</span>
-                    </div>
-                    <KeyValueEditor entries={paramEntries} onChange={setParamEntries} placeholderKey="param" placeholderValue="value" readOnlyKeys />
-                  </div>
-                )}
-
                 {/* Query params */}
                 <div>
                   <div className="font-mono text-[10px] text-muted-soft uppercase tracking-wider mb-2">Query Parameters</div>

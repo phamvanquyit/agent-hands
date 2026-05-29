@@ -1,9 +1,21 @@
-import { stepCountIs, streamText, tool } from "ai";
-import type { LanguageModel } from "ai";
+/**
+ * Dynamic API Coding Agent
+ *
+ * AI agent that generates JavaScript code for Dynamic API handlers.
+ * Uses LangChain/LangGraph for the agent loop with tool calling.
+ * Mirrors the MCP Tool Coding Agent pattern.
+ */
+
+import type { AIMessageChunk } from "@langchain/core/messages";
+import { tool } from "@langchain/core/tools";
+import { END, MessagesAnnotation, START, StateGraph } from "@langchain/langgraph";
+import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
 import TurndownService from "turndown";
 import { z } from "zod";
+import { fetchBrowser } from "../../common/utils/fetch-browser.js";
 import { executeIsolated, hasNpmImports } from "../../common/sandbox/js-executor.js";
-import { getModelForProvider } from "../llm-providers/llm-provider.chat.js";
+import { getChatModelForProvider } from "../llm-providers/llm-provider.chat.js";
+import { getDynamicApiById, updateDynamicApi } from "./dynamic-api.service.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -121,10 +133,7 @@ async function dryRunCode(
 
 async function fetchWebContent(url: string, mode: "raw" | "md" = "raw"): Promise<string> {
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(url, { signal: controller.signal, headers: { "User-Agent": "AgentHands/1.0" } });
-    clearTimeout(timeout);
+    const res = await fetchBrowser(url);
     if (!res.ok) return `HTTP Error ${res.status}: ${res.statusText}`;
     const contentType = res.headers.get("content-type") || "";
     if (contentType.includes("application/json")) {
@@ -141,26 +150,25 @@ async function fetchWebContent(url: string, mode: "raw" | "md" = "raw"): Promise
   }
 }
 
-// ── Extract code block from LLM response ─────────────────────────────────────
-
-function extractCode(content: string): string | null {
-  const blockMatch = content.match(/```(?:javascript|js|typescript|ts)?\n([\s\S]*?)```/);
-  if (blockMatch) return blockMatch[1].trim();
-  if (content.includes("export default") || content.includes("function handler")) {
-    return content.trim();
-  }
-  return null;
-}
-
-// ── System Prompts ────────────────────────────────────────────────────────────
+// ── System Prompt ────────────────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `You are a JavaScript API handler code generator for the Agent Hands Dynamic API system.
 
-Handler pattern:
+Handler pattern — EVERY handler MUST use this exact structure:
 \`\`\`javascript
 export default async function handler(request, context) {
   // request: { method, path, params, query, headers, body }
   // context: { log(...args) }
+  //
+  // request.method  — HTTP method (GET, POST, PUT, PATCH, DELETE)
+  // request.path    — Request path (e.g. /users/123)
+  // request.params  — Path parameters from route pattern (:id → params.id)
+  // request.query   — URL query parameters (?page=1&limit=10)
+  // request.headers — HTTP request headers
+  // request.body    — Parsed request body (JSON) or null for GET
+  //
+  // context.log(...args) — Log for debugging output
+
   return { status: 200, body: { message: "Hello" } };
 }
 \`\`\`
@@ -170,64 +178,137 @@ PATH PARAMETERS:
 - Route /users/:userId/posts/:postId → request.params = { userId: "...", postId: "..." }
 - ALWAYS access path params via request.params, NOT by parsing request.path
 
-RULES:
+GENERAL RULES:
 - Always export default the handler function
 - Return { status, headers?, body? }
 - You can use fetch() for external API calls
 - You can import npm packages (e.g. import _ from "lodash")
 - NEVER use process.env
-- Do NOT use context.kv unless explicitly asked
+- Use context.log() for debugging output
 
-WORKFLOW:
-1. Analyze the user's request. If you already know how to implement it, go DIRECTLY to step 2.
-2. ONLY use fetch_web if the task REQUIRES inspecting a specific URL or reading unknown API docs. Do NOT fetch if:
-   - You already know the API format (e.g. common APIs like GitHub, OpenAI, weather services)
-   - The user's request is straightforward (e.g. "create a calculator", "return JSON data")
-   - You have already fetched sufficient information in this conversation
-   - Maximum 2-3 fetch calls per conversation. Once you have enough info, STOP fetching and write code.
-3. Write the handler code and use test_code to run it — pick realistic test inputs for the API.
-   ⚠️ CRITICAL: When calling test_code, you MUST ALWAYS check if the route has path params.
-   - If the route is /videos/:videoId → you MUST pass params: { videoId: "dQw4w9WgXcQ" }
-   - If the route is /users/:userId/posts/:postId → you MUST pass params: { userId: "user_123", postId: "post_456" }
-   - NEVER call test_code without params when the route has :paramName placeholders.
-   - Omitting params will cause the test to fail with "Missing parameter" errors.
-4. Fix any errors and test again until the test passes (status < 400, no error)
-5. When the test passes, respond with ONLY a \`\`\`javascript code block. No explanation, no other text.
+WORKFLOW — choose the right approach based on the user's request:
 
-IMPORTANT: Prefer writing and testing code over fetching. Most tasks can be solved without any fetch_web calls.`;
+## A) User asks to WRITE or MODIFY code:
+1. Analyze the user's request
+2. Call write_code with the COMPLETE code
+3. IMMEDIATELY call run_test with realistic params — MANDATORY after write_code
+4. If the test fails, fix the code with write_code, then call run_test again
+5. Repeat write→test cycle until tests pass, then respond with a short text summary
 
-const SUMMARY_SYSTEM_PROMPT = `You are a concise technical assistant. Write a short summary only — no code blocks. IMPORTANT: Always respond in the same language the user used in their original prompt.`;
+## B) User asks to TEST or DEBUG existing code (e.g. "test this", "run it", "try it"):
+1. Call run_test directly with realistic params — use the current code as-is
+2. Report the test result
+3. If test fails and you can identify the issue, offer to fix with write_code → run_test
+4. Do NOT rewrite code unless the user asks you to or the test reveals a bug
 
-// ── Shared tool factory ──────────────────────────────────────────────────────
+## C) User asks a QUESTION (e.g. "what does this do?", "explain the code"):
+1. Just respond with text — no tool calls needed
 
-function createTools(
+RULES:
+- After EVERY write_code call, your VERY NEXT action MUST be run_test. NEVER skip this.
+- NEVER call write_code twice in a row without run_test in between.
+- Do NOT write code in markdown code blocks. Always use the write_code tool.
+- Do NOT rewrite code unnecessarily — if the user just wants to test, use run_test directly.
+- When user says "test", "try", "run" etc. without asking for changes → use Workflow B.`;
+
+// ── Tool factory ─────────────────────────────────────────────────────────────
+
+function createLangChainTools(
   reqData: CodingAgentRequest,
   fetchWebCount: { count: number },
-  codeTracker: { current: string },
   codeChangedThisTurn: { value: boolean },
   onEvent: (event: AgentEvent) => void,
 ) {
-  return {
-    fetch_web: tool({
-      description:
-        "Fetch content from a URL. Use ONLY when you need to inspect a specific target URL or read unknown API documentation. Do NOT use for well-known APIs you already know. mode='raw' for HTML, mode='md' for readable Markdown.",
-      inputSchema: z.object({
+  // Guard: force model to call run_test after every write_code
+  const pendingTest = { value: false };
+
+  const fetchWebTool = tool(
+    async ({ url, mode }: { url: string; mode?: string }) => {
+      fetchWebCount.count++;
+      if (fetchWebCount.count > 10) {
+        return `[LIMIT REACHED] You have already made 10 fetch_web calls. Use the information you have to write the code.`;
+      }
+      return await fetchWebContent(url, (mode as "raw" | "md") ?? "raw");
+    },
+    {
+      name: "fetch_web",
+      description: "Fetch content from a URL. Use ONLY when you need to inspect a specific target URL or read unknown API documentation.",
+      schema: z.object({
         url: z.string().url(),
         mode: z.enum(["raw", "md"]).optional(),
       }),
-      execute: async ({ url, mode }) => {
-        fetchWebCount.count++;
-        if (fetchWebCount.count > 10) {
-          return `[LIMIT REACHED] You have already made 10 fetch_web calls. Use the information you have to write the code. Do NOT call fetch_web again.`;
+    },
+  );
+
+  const writeCodeTool = tool(
+    async ({ code }: { code: string }) => {
+      // If model called write_code again without testing — auto-test the PREVIOUS code first
+      if (pendingTest.value) {
+        const apiItem = await getDynamicApiById(reqData.apiId);
+        const prevCode = apiItem?.draftCode ?? apiItem?.code;
+        if (prevCode) {
+          const autoTestResult = await dryRunCode(prevCode, reqData.apiId, reqData.method, reqData.path);
+          onEvent({ type: "tool_call", toolName: "run_test", toolArgs: { params: "(auto-test: you forgot to call run_test)" } });
+          onEvent({ type: "tool_result", toolName: "run_test", toolResult: autoTestResult });
         }
-        return await fetchWebContent(url, mode ?? "raw");
-      },
-    }),
-    test_code: tool({
+      }
+
+      await updateDynamicApi(reqData.apiId, { draftCode: code });
+      codeChangedThisTurn.value = true;
+      pendingTest.value = true;
+      onEvent({ type: "code", code });
+
+      // Extract path params from route to tell model what to pass to run_test
+      const pathParams = (reqData.path.match(/:([a-zA-Z_][a-zA-Z0-9_]*)/g) || []).map((p) => p.slice(1));
+      const paramHint = pathParams.length > 0 ? ` Required path params for run_test: ${pathParams.map((p) => `${p} (string)`).join(", ")}.` : "";
+
+      return JSON.stringify({
+        success: true,
+        nextStep: `⚠️ MANDATORY: Call run_test NOW with realistic params. Do NOT call write_code again.${paramHint}`,
+      });
+    },
+    {
+      name: "write_code",
+      description: "Save the generated handler code as a draft. MANDATORY: Your very next tool call after this MUST be run_test. Never call write_code twice in a row.",
+      schema: z.object({
+        code: z.string().describe("The complete JavaScript handler code to save"),
+      }),
+    },
+  );
+
+  const runTestTool = tool(
+    async ({ body, query, params, headers }: { body?: Record<string, unknown>; query?: Record<string, string>; params?: Record<string, string>; headers?: Record<string, string> }) => {
+      pendingTest.value = false;
+      const apiItem = await getDynamicApiById(reqData.apiId);
+      const codeToRun = apiItem?.draftCode ?? apiItem?.code;
+      if (!codeToRun) {
+        return JSON.stringify({ success: false, result: { error: "no_code", message: "No code found. Call write_code first." } });
+      }
+
+      // Validate path params
+      const pathParamNames = (reqData.path.match(/:([a-zA-Z_][a-zA-Z0-9_]*)/g) || []).map((p) => p.slice(1));
+      if (pathParamNames.length > 0 && (!params || Object.keys(params).length === 0)) {
+        return JSON.stringify({
+          success: false,
+          error: "empty_params",
+          message: `You passed empty params but this route has ${pathParamNames.length} path parameter(s). Call run_test again with realistic values.`,
+          requiredParams: pathParamNames.map((p) => `${p}: string`),
+        });
+      }
+
+      const result = await dryRunCode(codeToRun, reqData.apiId, reqData.method, reqData.path, {
+        body,
+        query,
+        params,
+        headers,
+      });
+      return JSON.stringify(result);
+    },
+    {
+      name: "run_test",
       description:
-        "Execute and test the handler code. Returns status, body, consoleLogs, error, and executionTimeMs. REQUIRED: If the route has path params (e.g. /items/:id), you MUST provide the `params` object with matching values. Omitting params for a route like /videos/:videoId will cause an error.",
-      inputSchema: z.object({
-        code: z.string().describe("The JavaScript handler code to test"),
+        "Test the current draft handler code. Returns status, body, consoleLogs, error, and executionTimeMs. If the route has path params (e.g. /items/:id), you MUST provide the `params` object with matching values.",
+      schema: z.object({
         body: z.record(z.unknown()).optional().describe("Request body (for POST/PUT/PATCH)"),
         query: z.record(z.string()).optional().describe("Query string params (e.g. ?page=1)"),
         params: z
@@ -236,249 +317,213 @@ function createTools(
           .describe("URL path params — REQUIRED when route has :paramName placeholders. Example: { videoId: 'abc123' } for route /videos/:videoId"),
         headers: z.record(z.string()).optional().describe("Request headers"),
       }),
-      execute: async ({ code, body, query, params, headers }) => {
-        // Track code and emit code event
-        codeTracker.current = code;
-        codeChangedThisTurn.value = true;
-        onEvent({ type: "code", code });
+    },
+  );
 
-        const testResult = await dryRunCode(code, reqData.apiId, reqData.method, reqData.path, {
-          body,
-          query,
-          params,
-          headers,
-        });
-        return testResult;
-      },
-    }),
-  };
+  return [fetchWebTool, writeCodeTool, runTestTool];
 }
 
-// ── Stream agent and emit events from fullStream ─────────────────────────────
+// ── Stream agent and emit events ─────────────────────────────────────────────
 
-async function streamAgentLoop(
-  model: LanguageModel,
-  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
-  aiTools: ReturnType<typeof createTools>,
-  maxSteps: number,
+async function streamAgentEvents(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  agent: any,
+  input: { messages: Array<{ role: string; content: string }> },
   onEvent: (event: AgentEvent) => void,
 ): Promise<{ text: string }> {
-  const result = streamText({
-    model,
-    messages,
-    tools: aiTools,
-    stopWhen: stepCountIs(maxSteps),
-    temperature: 0.2,
-    onError({ error }) {
-      console.error("[CodingAgent] streamText error:", error);
-    },
+  let accumulatedText = "";
+
+  // Track tool calls in progress to pair with results and compute duration
+  const toolCallTimers = new Map<string, number>();
+
+  const stream = agent.streamEvents(input, {
+    version: "v2",
+    recursionLimit: 50,
   });
 
-  let accumulatedText = "";
-  let isInTextBlock = false;
+  for await (const event of stream) {
+    const eventType = event.event;
 
-  for await (const part of result.fullStream) {
-    switch (part.type) {
-      case "text-delta": {
-        accumulatedText += part.text;
-        // Stream text deltas to client in real-time
-        onEvent({ type: "text_delta", message: part.text });
-        if (!isInTextBlock) {
-          isInTextBlock = true;
+    if (eventType === "on_chat_model_stream") {
+      // Token-level streaming from the LLM
+      const chunk = event.data.chunk as AIMessageChunk;
+
+      // Text content streaming
+      if (chunk.content && typeof chunk.content === "string" && chunk.content.length > 0) {
+        accumulatedText += chunk.content;
+        onEvent({ type: "text_delta", message: chunk.content });
+      }
+
+      // Tool call streaming — detect when model starts generating a tool call
+      if (chunk.tool_call_chunks && chunk.tool_call_chunks.length > 0) {
+        // Tool call chunks are streamed incrementally, we just track them
+        // The actual tool_call event will be emitted on_tool_start
+      }
+    } else if (eventType === "on_tool_start") {
+      const toolName = event.name;
+      // LangGraph may wrap input in { input: ... } or pass it directly
+      let toolInput = event.data?.input;
+      // If input is wrapped in an "input" key with a stringified value, unwrap it
+      if (toolInput && typeof toolInput === "object" && "input" in toolInput && Object.keys(toolInput).length === 1) {
+        const inner = toolInput.input;
+        if (typeof inner === "string") {
+          try {
+            toolInput = JSON.parse(inner);
+          } catch {
+            toolInput = inner;
+          }
+        } else {
+          toolInput = inner;
         }
-        break;
       }
+      toolCallTimers.set(event.run_id, Date.now());
 
-      case "tool-call": {
-        // Tool call has been fully formed, about to execute
-        if (isInTextBlock) {
-          isInTextBlock = false;
+      // Emit tool_call event
+      if (toolName === "write_code") {
+        const codeLen = typeof toolInput?.code === "string" ? toolInput.code.length : 0;
+        onEvent({ type: "tool_call", toolName, toolArgs: { code: `[${codeLen} chars]` } });
+      } else {
+        onEvent({ type: "tool_call", toolName, toolArgs: toolInput });
+      }
+    } else if (eventType === "on_tool_end") {
+      const toolName = event.name;
+      let toolResult: unknown;
+
+      // LangGraph v2 returns ToolMessage objects with .content property
+      // Extract the raw output string from the ToolMessage or use directly
+      const rawOutput = event.data?.output;
+      let outputStr: string | undefined;
+
+      if (typeof rawOutput === "string") {
+        outputStr = rawOutput;
+      } else if (rawOutput && typeof rawOutput === "object") {
+        // ToolMessage object — extract .content
+        const content = (rawOutput as Record<string, unknown>).content;
+        if (typeof content === "string") {
+          outputStr = content;
         }
-        const toolName = part.toolName as string;
-        const displayArgs = { ...(part.input as Record<string, unknown>) };
-        if (toolName === "test_code" && displayArgs.code) {
-          displayArgs.code = `(${(displayArgs.code as string).length} chars)`;
+      }
+
+      if (outputStr) {
+        try {
+          toolResult = JSON.parse(outputStr);
+        } catch {
+          toolResult = outputStr;
         }
-        onEvent({ type: "tool_call", toolName, toolArgs: displayArgs });
-        break;
+      } else {
+        toolResult = rawOutput;
       }
 
-      case "tool-result": {
-        const toolName = part.toolName as string;
-        let toolResult: unknown = part.output;
-        if (toolName === "fetch_web" && typeof part.output === "string") {
-          toolResult = part.output.slice(0, 300) + (part.output.length > 300 ? "…" : "");
-        }
-        onEvent({ type: "tool_result", toolName, toolResult });
-        break;
+      // For fetch_web, truncate the result for display
+      if (toolName === "fetch_web" && typeof outputStr === "string") {
+        toolResult = outputStr.slice(0, 300) + (outputStr.length > 300 ? "…" : "");
       }
 
-      case "start-step": {
-        // New step starting (LLM call) — emit thinking
-        onEvent({ type: "thinking", message: "Analyzing and planning next step…" });
-        break;
-      }
+      const startTime = toolCallTimers.get(event.run_id);
+      const duration = startTime ? Date.now() - startTime : undefined;
+      toolCallTimers.delete(event.run_id);
 
-      case "finish-step": {
-        // Step completed — reset text tracking for next step
-        if (isInTextBlock) {
-          isInTextBlock = false;
-        }
-        break;
-      }
-
-      case "error": {
-        onEvent({ type: "error", message: String(part.error) });
-        break;
-      }
-
-      // Ignore: text-start, text-end, tool-input-start, tool-input-delta, tool-input-end,
-      // reasoning-*, source, file, raw, start, finish, abort, etc.
-      default:
-        break;
+      onEvent({ type: "tool_result", toolName, toolResult, duration });
+    } else if (eventType === "on_chain_start" && event.name === "agent") {
+      onEvent({ type: "thinking", message: "Analyzing and planning next step…" });
+    } else if (eventType === "on_chain_error") {
+      onEvent({ type: "error", message: String(event.data?.error || "Unknown error") });
     }
   }
 
   return { text: accumulatedText };
 }
 
-// ── Run Agent (AI SDK v6 — streamText) ───────────────────────────────────────
+// ── Run Agent ────────────────────────────────────────────────────────────────
 
 export async function runCodingAgent(reqData: CodingAgentRequest, onEvent: (event: AgentEvent) => void): Promise<void> {
-  const model = await getModelForProvider(reqData.providerId, reqData.model);
+  const model = await getChatModelForProvider(reqData.providerId, reqData.model);
 
   const fetchWebCount = { count: 0 };
-  const codeTracker = { current: reqData.currentCode || "" };
   const codeChangedThisTurn = { value: false };
-  const initialCode = reqData.currentCode || "";
 
   // ── Build messages ──────────────────────────────────────────────────────
 
-  const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [{ role: "system", content: SYSTEM_PROMPT }];
-
-  // Add history
-  for (const msg of reqData.history ?? []) {
-    messages.push({ role: msg.role, content: msg.content });
+  // Embed current code into system prompt so LLM always knows the latest draft
+  let systemContent = SYSTEM_PROMPT;
+  if (reqData.currentCode) {
+    systemContent += `\n\nCurrent code draft:\n\`\`\`javascript\n${reqData.currentCode}\n\`\`\``;
   }
 
-  // Build user message with rich API context
-  let userMsg = reqData.prompt;
-  if (reqData.currentCode) userMsg += `\n\nCurrent code:\n\`\`\`javascript\n${reqData.currentCode}\n\`\`\``;
+  const hasHistory = reqData.history && reqData.history.length > 0;
 
-  // Parse path params from route pattern (e.g. /videos/:videoId → ["videoId"])
-  const pathParams = (reqData.path.match(/:([a-zA-Z_][a-zA-Z0-9_]*)/g) || []).map((p) => p.slice(1));
+  // Build user message
+  // - History is embedded as context text (not separate turns) to avoid
+  //   validation errors with tool-registered assistant messages
+  // - API metadata (method, path) only sent on first message
+  let userMsg = "";
 
-  userMsg += `\n\nAPI: ${reqData.method} ${reqData.path}`;
-
-  if (pathParams.length > 0) {
-    userMsg += `\n\n⚠️ PATH PARAMETERS (REQUIRED for test_code):`;
-    userMsg += `\nThis route has the following path parameters: ${pathParams.map((p) => `\`:${p}\``).join(", ")}`;
-    userMsg += `\nWhen calling test_code, you MUST include: params: { ${pathParams.map((p) => `${p}: "<realistic_value>"`).join(", ")} }`;
-    userMsg += `\nDo NOT omit params — the test will fail with a "Missing parameter" error if you do.`;
+  if (hasHistory) {
+    userMsg += "Previous conversation:\n";
+    for (const msg of reqData.history!) {
+      userMsg += `[${msg.role.toUpperCase()}]: ${msg.content}\n\n`;
+    }
+    userMsg += "---\n\nNew request:\n";
   }
 
-  if (["POST", "PUT", "PATCH"].includes(reqData.method)) {
-    userMsg += `\nThis endpoint uses ${reqData.method}, so the handler likely receives data in \`request.body\`. Provide a realistic \`body\` object when testing.`;
+  userMsg += reqData.prompt;
+
+  // Only include API metadata on the first message — LLM already knows from history
+  if (!hasHistory) {
+    userMsg += `\n\nAPI endpoint: ${reqData.method} ${reqData.path}`;
+
+    // Parse path params from route pattern
+    const pathParams = (reqData.path.match(/:([a-zA-Z_][a-zA-Z0-9_]*)/g) || []).map((p) => p.slice(1));
+
+    if (pathParams.length > 0) {
+      userMsg += `\n\n⚠️ PATH PARAMETERS:`;
+      userMsg += `\nThis route has path parameters: ${pathParams.map((p) => `\`:${p}\``).join(", ")}`;
+      userMsg += `\nWhen calling run_test, you MUST include: params: { ${pathParams.map((p) => `${p}: "<realistic_value>"`).join(", ")} }`;
+    }
+
+    if (["POST", "PUT", "PATCH"].includes(reqData.method)) {
+      userMsg += `\nThis endpoint uses ${reqData.method}, so the handler likely receives data in \`request.body\`. Provide a realistic \`body\` object when testing.`;
+    }
   }
 
-  if (reqData.method === "GET" || reqData.method === "DELETE") {
-    userMsg += `\nThis endpoint uses ${reqData.method}. Data is typically passed via \`request.query\` or \`request.params\`.`;
+  const messages = [
+    { role: "system", content: systemContent },
+    { role: "user", content: userMsg },
+  ];
+
+  // ── Create agent graph ──────────────────────────────────────────────────
+
+  const tools = createLangChainTools(reqData, fetchWebCount, codeChangedThisTurn, onEvent);
+  const modelWithTools = (model as any).bindTools(tools);
+
+  // Model node: invoke LLM with tool bindings
+  async function callModel(state: typeof MessagesAnnotation.State) {
+    const response = await modelWithTools.invoke(state.messages);
+    return { messages: [response] };
   }
-  messages.push({ role: "user", content: userMsg });
 
-  // ── Create tools ────────────────────────────────────────────────────────
+  // Build the agent graph: model → (tools → model)* → end
+  const workflow = new StateGraph(MessagesAnnotation)
+    .addNode("model", callModel)
+    .addNode("tools", new ToolNode(tools))
+    .addEdge(START, "model")
+    .addConditionalEdges("model", toolsCondition, { tools: "tools", [END]: END })
+    .addEdge("tools", "model");
 
-  const aiTools = createTools(reqData, fetchWebCount, codeTracker, codeChangedThisTurn, onEvent);
+  const agent = workflow.compile();
 
   try {
-    // ── Stream the agent loop ─────────────────────────────────────────────
-    const { text: finalText } = await streamAgentLoop(model as LanguageModel, messages, aiTools, 25, onEvent);
-
-    // ── Process final response ───────────────────────────────────────────
-
-    // Check if final response has code
-    const code = extractCode(finalText);
-
-    // If there's new code in the final response that wasn't already tested
-    const isNewCode = code && code !== initialCode && code !== codeTracker.current;
-
-    if (isNewCode) {
-      codeTracker.current = code;
-      codeChangedThisTurn.value = true;
-      onEvent({ type: "code", code });
-
-      // Force test if code was in final message but not tested
-      onEvent({ type: "tool_call", toolName: "test_code", toolArgs: {} });
-      const testResult = await dryRunCode(code, reqData.apiId, reqData.method, reqData.path);
-      onEvent({ type: "tool_result", toolName: "test_code", toolResult: testResult });
-
-      if (testResult.error || testResult.status >= 400) {
-        // If test fails, try to fix via a second stream
-        onEvent({ type: "thinking", message: "Test failed — fixing code…" });
-
-        const fixMessages = [
-          ...messages,
-          { role: "assistant" as const, content: finalText },
-          {
-            role: "user" as const,
-            content: `Test failed:\n${JSON.stringify({ status: testResult.status, error: testResult.error, body: testResult.body, consoleLogs: testResult.consoleLogs }, null, 2)}\n\nOriginal requirement: ${reqData.prompt}\n\nFix the handler code.`,
-          },
-        ];
-
-        const { text: fixText } = await streamAgentLoop(model as LanguageModel, fixMessages, aiTools, 15, onEvent);
-
-        const fixCode = extractCode(fixText);
-        if (fixCode) {
-          codeTracker.current = fixCode;
-          onEvent({ type: "code", code: fixCode });
-        }
-      }
-    } else if (finalText && !code) {
-      // Text-only response — mark end of streaming text
-      onEvent({ type: "text", message: "" });
-    }
-
-    // Generate summary ONLY if code was actually changed during this turn
-    if (codeChangedThisTurn.value && codeTracker.current) {
-      onEvent({ type: "thinking", message: "Generating summary…" });
-      const summaryModel = await getModelForProvider(reqData.providerId, reqData.model);
-
-      // Stream the summary too
-      const summaryStream = streamText({
-        model: summaryModel as LanguageModel,
-        messages: [
-          { role: "system", content: SUMMARY_SYSTEM_PROMPT },
-          {
-            role: "user",
-            content: `User's original prompt: "${reqData.prompt}"
-
-The following handler code was generated:
-\`\`\`javascript
-${codeTracker.current}
-\`\`\`
-
-Write a concise summary: what the handler does, what test inputs were used, and what the test result was. Respond in the same language as the user's prompt above.`,
-          },
-        ],
-      });
-
-      for await (const delta of summaryStream.textStream) {
-        onEvent({ type: "text_delta", message: delta });
-      }
-      // Signal end of text block
-      onEvent({ type: "text", message: "" });
-    }
+    await streamAgentEvents(agent, { messages }, onEvent);
   } catch (err) {
     const errObj = err as Record<string, unknown>;
     console.error("[CodingAgent] runCodingAgent error:", err);
     if (errObj.responseBody) {
       console.error("[CodingAgent] Response body:", String(errObj.responseBody).slice(0, 500));
     }
-    if (errObj.cause) {
-      console.error("[CodingAgent] Cause:", errObj.cause);
-    }
     onEvent({ type: "error", message: (err as Error).message });
   }
 
-  onEvent({ type: "done", code: codeTracker.current || undefined });
+  // Query DB for the latest code to include in done event
+  const finalApi = await getDynamicApiById(reqData.apiId);
+  onEvent({ type: "done", code: finalApi?.draftCode ?? finalApi?.code ?? undefined });
 }

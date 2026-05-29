@@ -47,18 +47,21 @@ const reqIdGen = customAlphabet("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", 16);
 export function registerS3Routes(app: FastifyInstance) {
   // ── Always parse body as raw Buffer for S3 (overrides JSON/text parsers) ────
   // text/plain is parsed as string by Fastify by default → byteLength wrong
-  app.addContentTypeParser("application/json", { parseAs: "buffer" }, (_req, body, done) => {
-    done(null, body);
-  });
-  app.addContentTypeParser("text/plain", { parseAs: "buffer" }, (_req, body, done) => {
-    done(null, body);
-  });
-  app.addContentTypeParser("application/xml", { parseAs: "buffer" }, (_req, body, done) => {
-    done(null, body);
-  });
-  app.addContentTypeParser("text/xml", { parseAs: "buffer" }, (_req, body, done) => {
-    done(null, body);
-  });
+  const s3ContentTypes = [
+    "application/json",
+    "text/plain",
+    "application/xml",
+    "text/xml",
+  ];
+
+  for (const mimeType of s3ContentTypes) {
+    if (app.hasContentTypeParser(mimeType)) {
+      app.removeContentTypeParser(mimeType);
+    }
+    app.addContentTypeParser(mimeType, { parseAs: "buffer" }, (_req, body, done) => {
+      done(null, body);
+    });
+  }
 
   // ── S3 Auth hook ──────────────────────────────────────────────────────────────
   app.addHook("preHandler", async (req, reply) => {

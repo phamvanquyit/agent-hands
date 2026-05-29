@@ -166,10 +166,10 @@ export default function AccessKeysPanel() {
           </Text>
         </div>
         <Space>
-          <Button size="small" icon={<RefreshCw size={14} />} onClick={fetchKeys}>
+          <Button size="medium" icon={<RefreshCw size={14} />} onClick={fetchKeys}>
             Refresh
           </Button>
-          <Button type="primary" size="small" icon={<Plus size={14} />} onClick={() => setCreateModalOpen(true)}>
+          <Button type="primary" size="medium" icon={<Plus size={14} />} onClick={() => setCreateModalOpen(true)}>
             Create Access Key
           </Button>
         </Space>
@@ -364,7 +364,7 @@ function SecretKeyModal({ keyData, onClose }: { keyData: StorageAccessKeyCreated
           <Text code style={{ fontSize: 13, userSelect: "all" }}>
             {keyData.accessKey}
           </Text>
-          <Button type="text" size="small" icon={<Copy size={12} />} onClick={() => handleCopy(keyData.accessKey, "Access Key")} />
+          <Button type="text" size="medium" icon={<Copy size={12} />} onClick={() => handleCopy(keyData.accessKey, "Access Key")} />
         </Space>
       </div>
 
@@ -376,8 +376,8 @@ function SecretKeyModal({ keyData, onClose }: { keyData: StorageAccessKeyCreated
           <Text code style={{ fontSize: 13, userSelect: "all", filter: showSecret ? "none" : "blur(4px)", transition: "filter 0.2s" }}>
             {keyData.secretKey}
           </Text>
-          <Button type="text" size="small" icon={showSecret ? <EyeOff size={12} /> : <Eye size={12} />} onClick={() => setShowSecret(!showSecret)} />
-          <Button type="text" size="small" icon={<Copy size={12} />} onClick={() => handleCopy(keyData.secretKey, "Secret Key")} />
+          <Button type="text" size="medium" icon={showSecret ? <EyeOff size={12} /> : <Eye size={12} />} onClick={() => setShowSecret(!showSecret)} />
+          <Button type="text" size="medium" icon={<Copy size={12} />} onClick={() => handleCopy(keyData.secretKey, "Secret Key")} />
         </Space>
       </div>
 

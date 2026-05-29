@@ -266,9 +266,19 @@ console.log(v.value);`,
       {
         method: "DELETE",
         path: "/:id",
-        summary: "Delete a single variable",
+        summary: "Delete a single variable by ID",
         auth: "both",
         jsExample: `await client.kvStore.delete("var_xxx");`,
+      },
+      {
+        method: "DELETE",
+        path: "/by-key/:key",
+        summary: "Delete variable by key",
+        auth: "both",
+        jsExample: `await fetch("{{BASE_URL}}/api/kv-store/by-key/api_url", {
+  method: "DELETE",
+  headers: { "X-API-Key": "YOUR_API_KEY" }
+});`,
       },
       {
         method: "DELETE",
@@ -1035,14 +1045,25 @@ result.items.forEach(api => console.log(api.method, api.path));`,
       {
         method: "PATCH",
         path: "/:id",
-        summary: "Update dynamic API (code, config, dependencies, toggle active)",
+        summary: "Update dynamic API (code, draftCode, config, dependencies, toggle active)",
         auth: "both",
-        body: `{ "code": "...", "dependencies": { "axios": "^1.7.0" }, "isActive": false }`,
-        notes: "Set dependencies to null to switch back to fast mode (in-process execution).",
-        jsExample: `await client.dynamicApis.update("dap_xxx", {
-  dependencies: { "axios": "^1.7.0" },
-  isActive: false
-});`,
+        body: `{ "code": "...", "draftCode": "...", "dependencies": { "axios": "^1.7.0" }, "isActive": false }`,
+        notes: `Set dependencies to null to switch back to fast mode (in-process execution).
+\`code\` is the live/production handler code. \`draftCode\` is a staging area for code being developed or tested.
+Use the Draft Code Workflow: save draftCode → dry-run test → iterate → promote to code.`,
+        jsExample: `// Update live code
+await client.dynamicApis.update("dap_xxx", {
+  code: "export default async function handler(req, ctx) { ... }",
+  draftCode: "export default async function handler(req, ctx) { ... }"
+});
+
+// Save draft only (does not affect live endpoint)
+await client.dynamicApis.update("dap_xxx", {
+  draftCode: "export default async function handler(req, ctx) { ... }"
+});
+
+// Discard draft
+await client.dynamicApis.update("dap_xxx", { draftCode: null });`,
       },
       {
         method: "DELETE",
@@ -1062,6 +1083,49 @@ result.items.forEach(api => console.log(api.method, api.path));`,
   startDate: Date.now() - 86400_000, // last 24 hours
   endDate: Date.now()
 });`,
+      },
+      {
+        method: "POST",
+        path: "/:id/test",
+        summary: "Dry-run test — execute draft or production code from DB",
+        auth: "both",
+        body: `{
+  "source": "draft",
+  "params": { "id": "123" },
+  "query": { "page": "1" },
+  "headers": {},
+  "body": null,
+  "timeout": 30000
+}`,
+        response: `{
+  "status": 200,
+  "headers": {},
+  "body": { "ok": true },
+  "consoleLogs": ["Hello from handler!"],
+  "executionTimeMs": 12,
+  "executionMode": "fast",
+  "error": null
+}`,
+        notes: `\`source\`: \`"draft"\` (default) runs \`draftCode\` from DB, falls back to \`code\`. \`"prod"\` runs the live \`code\`.
+Method and path are read from the DB record. \`params\`, \`query\`, \`headers\`, \`body\` simulate the incoming request.
+Typical workflow: save draftCode via PATCH → test via POST /test → iterate → promote to live code.`,
+        jsExample: `// Step 1: Save draft code
+await fetch("{{BASE_URL}}/api/dynamic-apis/dap_xxx", {
+  method: "PATCH",
+  headers: { "Content-Type": "application/json", "X-API-Key": "YOUR_API_KEY" },
+  body: JSON.stringify({
+    draftCode: 'export default async function handler(req, ctx) { return { status: 200, body: { time: Date.now() } }; }'
+  })
+});
+
+// Step 2: Test the draft
+const result = await fetch("{{BASE_URL}}/api/dynamic-apis/dap_xxx/test", {
+  method: "POST",
+  headers: { "Content-Type": "application/json", "X-API-Key": "YOUR_API_KEY" },
+  body: JSON.stringify({ source: "draft", params: {}, query: {} })
+});
+const data = await result.json();
+console.log(data.status, data.body, data.executionTimeMs);`,
       },
     ],
   },

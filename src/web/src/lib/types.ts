@@ -487,6 +487,7 @@ export interface DynamicApiItem {
   path: string;
   description: string | null;
   code: string;
+  draftCode: string | null;
   dependencies: Record<string, string> | null;
   isActive: boolean;
   isPublic: boolean;
@@ -513,6 +514,7 @@ export interface UpdateDynamicApiInput {
   path?: string;
   description?: string | null;
   code?: string;
+  draftCode?: string | null;
   dependencies?: Record<string, string> | null;
   isActive?: boolean;
   isPublic?: boolean;

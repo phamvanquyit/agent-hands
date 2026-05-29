@@ -6,6 +6,7 @@ import { useMemo, useRef } from "react";
 import { formatTTL, agentHandsGridTheme } from "./common/utils";
 import AddVariableButton from "./components/AddVariableButton";
 import PurgeButton from "./components/PurgeButton";
+import KvDocsModal from "./components/KvDocsModal";
 import { useKvStore } from "./hooks/useKvStore";
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -91,6 +92,7 @@ export default function KvStorePage() {
           </div>
 
           <div className="flex items-center gap-3 shrink-0">
+            <KvDocsModal />
             <PurgeButton selectedIds={selectedIds} onPurged={handlePurged} />
             <AddVariableButton onCreated={fetchVariables} />
           </div>
@@ -169,6 +171,7 @@ export default function KvStorePage() {
           </div>
         </div>
       )}
+
     </div>
   );
 }

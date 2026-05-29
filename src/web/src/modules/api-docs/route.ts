@@ -1,5 +1,5 @@
 import { lazy } from "react";
-import type { ModuleNav, ModuleRoute } from "src/common/types/router";
+import type { ModuleRoute } from "src/common/types/router";
 
 const ApiDocsPage = lazy(() => import("./pages/ApiDocsPage"));
 
@@ -10,9 +10,9 @@ export const routes: ModuleRoute[] = [
   },
 ];
 
-export const nav: ModuleNav = {
-  label: "API Docs",
-  icon: "book-open",
-  order: 3,
-  group: "admin",
-};
+// export const nav: ModuleNav = {
+//   label: "API Docs",
+//   icon: "book-open",
+//   order: 3,
+//   group: "admin",
+// };

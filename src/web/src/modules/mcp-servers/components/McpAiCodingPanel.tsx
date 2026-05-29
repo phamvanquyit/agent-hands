@@ -900,8 +900,14 @@ export function McpAiCodingPanel({ serverId, toolId, toolName, toolDescription, 
     <div className="flex flex-col h-full overflow-hidden bg-canvas">
       <div className="shrink-0 px-2 py-3 border-b border-hairline">
         <div className="flex items-center gap-2 mb-2.5">
-          <span className="font-mono text-[11px] uppercase tracking-[0.88px] text-muted-soft font-semibold">AI AGENT</span>
-          {running && <span className="font-mono text-[11px] text-amber-400/80 tabular-nums">{elapsedStr}</span>}
+          {running && (
+            <span className="relative flex h-[7px] w-[7px]">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-[7px] w-[7px] bg-amber-500" />
+            </span>
+          )}
+          <span className={`font-mono text-[11px] uppercase tracking-[0.88px] font-semibold transition-colors ${running ? "text-amber-500" : "text-muted-soft"}`}>AI AGENT</span>
+          {running && <span className="font-mono text-[11px] text-amber-400/80 tabular-nums ml-auto">{elapsedStr}</span>}
         </div>
         <ModelPickerPopover
           providers={providers}
@@ -914,6 +920,26 @@ export function McpAiCodingPanel({ serverId, toolId, toolName, toolDescription, 
           }}
         />
       </div>
+
+      {/* Indeterminate progress bar */}
+      <div className="shrink-0 h-[2px] bg-hairline overflow-hidden">
+        {running && (
+          <div
+            className="h-full w-1/3 rounded-full bg-amber-400"
+            style={{
+              animation: "ai-progress-slide 1.4s ease-in-out infinite",
+            }}
+          />
+        )}
+      </div>
+
+      <style>{`
+        @keyframes ai-progress-slide {
+          0%   { transform: translateX(-100%) scaleX(1); }
+          50%  { transform: translateX(150%) scaleX(1.5); }
+          100% { transform: translateX(400%) scaleX(1); }
+        }
+      `}</style>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-2 py-4 space-y-4">
         {chatMessages.length === 0 && !running && (
@@ -954,7 +980,7 @@ export function McpAiCodingPanel({ serverId, toolId, toolName, toolDescription, 
       </div>
 
       <div className="shrink-0 px-2 py-2 bg-canvas">
-        <div className="relative flex items-stretch bg-surface-card border border-hairline rounded-lg focus-within:border-hairline-strong transition-colors overflow-hidden">
+        <div className={`relative flex items-stretch bg-surface-card border rounded-lg focus-within:border-hairline-strong transition-colors overflow-hidden ${running ? "border-amber-500/30" : "border-hairline"}`}>
           <textarea
             ref={textareaRef}
             value={prompt}
@@ -965,7 +991,7 @@ export function McpAiCodingPanel({ serverId, toolId, toolName, toolDescription, 
                 handleRun();
               }
             }}
-            placeholder={chatMessages.length > 0 ? "Follow up…" : "Describe what to build…"}
+            placeholder={running ? "" : chatMessages.length > 0 ? "Follow up…" : "Describe what to build…"}
             className="w-full font-mono text-[12px] leading-[1.5] bg-transparent text-ink pl-3.5 pr-12 py-3.5 resize-none border-none outline-none focus:outline-none focus:ring-0 placeholder:text-muted-soft"
             rows={2}
             spellCheck={false}

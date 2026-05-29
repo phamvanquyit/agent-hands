@@ -120,6 +120,7 @@ export async function updateDynamicApi(id: string, data: UpdateDynamicApiBody) {
   if (data.path !== undefined) updates.path = data.path;
   if (data.description !== undefined) updates.description = data.description;
   if (data.code !== undefined) updates.code = data.code;
+  if (data.draftCode !== undefined) updates.draftCode = data.draftCode;
   if (data.dependencies !== undefined) {
     updates.dependencies = data.dependencies
       ? JSON.stringify(data.dependencies)

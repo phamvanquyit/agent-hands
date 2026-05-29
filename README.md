@@ -14,7 +14,7 @@ Agent Hands provides all the building blocks LLM agents need to operate — stat
 
 When building LLM agents and AI pipelines, you typically need:
 
-- **State storage** — agents need to read/write runtime variables across runs
+- **State storage** — agents need to read/write key-value data across runs
 - **Structured data** — tables with custom columns, sort/filter like Notion databases
 - **File storage** — self-hosted object storage for documents, images, artifacts
 - **Agent tools** — system tools exposed via MCP protocol for AI clients
@@ -31,11 +31,11 @@ Instead of integrating multiple separate services (Redis, Notion, S3, custom too
 | Module | Description | Status |
 |---|---|---|
 | 👤 **User Management** | Authentication, RBAC (superadmin/admin/user), session management, API keys | ✅ Done |
-| 🔑 **Dynamic Variables** | Redis-like key-value store with data types, TTL, namespaces | ✅ Done |
+| 🔑 **KV Store** | Flat key-value store with data types, TTL, prefix-based organization | ✅ Done |
 | 📊 **Dynamic Tables** | Notion-style databases with custom columns, sort/filter, row CRUD | ✅ Done |
 
 | 📦 **Storage** | Self-hosted S3-compatible object storage: buckets, upload/download, presigned URLs, access keys | ✅ Done |
-| 🔌 **Built-in MCP Server** | System MCP server exposing Variables, Tables, Storage as tools for AI agents | ✅ Done |
+| 🔌 **Built-in MCP Server** | System MCP server exposing KV Store, Tables, Storage as tools for AI agents | ✅ Done |
 | ⚡ **Dynamic API** | Create HTTP API endpoints at runtime using JS/TS code on Bun runtime | ✅ Done |
 
 ### 🚧 In Progress / Planned
@@ -209,8 +209,7 @@ X-API-Key: ltk_xxxxxxxxxxxx
 | `POST /api/auth/login` | Authenticate, get JWT token |
 | `/api/users` | User management (admin+) |
 | `/api/api-keys` | API Key management (admin+) |
-| `/api/variable-namespaces` | Variable namespaces CRUD |
-| `/api/variable-namespaces/:nsId/variables` | Variables CRUD (within a namespace) |
+| `/api/kv-store` | KV Store entries CRUD (flat, globally unique keys) |
 | `/api/databases` | Database containers CRUD |
 | `/api/databases/:dbId/tables` | Tables, columns, rows CRUD |
 
@@ -228,24 +227,17 @@ X-API-Key: ltk_xxxxxxxxxxxx
 
 ## Integration with LLM Agents
 
-### 🔑 Dynamic Variables — Agent State Storage
+### 🔑 KV Store — Agent State Storage
 
-Agents can persist and read state via the Variables API. Variables are organized into **namespaces**.
+Agents can persist and read state via the KV Store API. Keys are **globally unique** — use prefixes for organization (e.g. `session.123.step`, `config.api_url`).
 
 ```javascript
-// Create a namespace
-const ns = await fetch('http://localhost:18080/api/variable-namespaces', {
-  method: 'POST',
-  headers: { 'X-API-Key': 'ltk_your-key', 'Content-Type': 'application/json' },
-  body: JSON.stringify({ name: 'agent-session-123', description: 'Session state' })
-}).then(r => r.json());
-
-// Write a variable (with optional TTL)
-await fetch(`http://localhost:18080/api/variable-namespaces/${ns.id}/variables`, {
+// Write a key-value entry (with optional TTL)
+await fetch('http://localhost:18080/api/kv-store', {
   method: 'POST',
   headers: { 'X-API-Key': 'ltk_your-key', 'Content-Type': 'application/json' },
   body: JSON.stringify({
-    key: 'current_step',
+    key: 'session.123.current_step',
     value: '3',
     type: 'string',
     ttl: 3600  // auto-delete after 1 hour
@@ -254,7 +246,7 @@ await fetch(`http://localhost:18080/api/variable-namespaces/${ns.id}/variables`,
 
 // Read a variable by key
 const variable = await fetch(
-  `http://localhost:18080/api/variable-namespaces/${ns.id}/variables/by-key/current_step`,
+  'http://localhost:18080/api/kv-store/by-key/session.123.current_step',
   { headers: { 'X-API-Key': 'ltk_your-key' } }
 ).then(r => r.json());
 ```
@@ -271,8 +263,7 @@ The built-in MCP server exposes the entire system to AI agents via 3 meta-tools:
 
 **Available actions:**
 
-- **Variables**: `variables.list`, `variables.get`, `variables.set`, `variables.delete`
-- **Variable Namespaces**: `variable_namespaces.list`, `variable_namespaces.create`, `variable_namespaces.update`, `variable_namespaces.delete`
+- **KV Store**: `kv.list`, `kv.get`, `kv.set`, `kv.delete`
 - **Databases & Tables**: `databases.list`, `tables.list`, `tables.query`, `tables.insert`, `tables.update`, `tables.delete`
 
 - **Storage**: `storage.list_buckets`, `storage.list_objects`, `storage.get_object_info`, `storage.get_download_url`, `storage.delete_object`

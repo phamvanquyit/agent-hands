@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowUpDown,
+  BookOpen,
   Calendar,
   Database,
   Filter,
@@ -23,6 +24,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { client } from "src/lib/client";
 import { AgentHandsError } from "src/lib/http";
+import DatatableDocsModal from "../components/DatatableDocsModal";
 import type {
   AddColumnInput,
   ColumnDef,
@@ -144,6 +146,7 @@ export default function ProjectDetailPage() {
   const [addRowOpen, setAddRowOpen] = useState(false);
   const [addColumnOpen, setAddColumnOpen] = useState(false);
   const [editColumn, setEditColumn] = useState<ColumnDef | null>(null);
+  const [docsOpen, setDocsOpen] = useState(false);
 
   // ── Filter/Sort state ──
   const [filters, setFilters] = useState<FilterCondition[]>([]);
@@ -437,6 +440,13 @@ export default function ProjectDetailPage() {
             </div>
             {project.description && <span className="font-mono text-[11px] uppercase tracking-wide text-muted-soft mt-1 truncate">{project.description}</span>}
           </div>
+          <button
+            onClick={() => setDocsOpen(true)}
+            className="flex items-center gap-1.5 h-[36px] px-4 rounded-md bg-transparent border border-hairline hover:bg-surface-card text-ink font-mono text-[11px] uppercase tracking-wider transition-colors cursor-pointer shrink-0"
+          >
+            <BookOpen size={14} />
+            Connect LLM
+          </button>
         </div>
 
         {/* ── Table Tabs ── */}
@@ -780,6 +790,13 @@ export default function ProjectDetailPage() {
           />
         </>
       )}
+
+      <DatatableDocsModal
+        open={docsOpen}
+        onClose={() => setDocsOpen(false)}
+        project={project}
+        tables={tables}
+      />
     </div>
   );
 }

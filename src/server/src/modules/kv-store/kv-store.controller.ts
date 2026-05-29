@@ -104,6 +104,16 @@ export function registerKvStoreRoutes(app: FastifyInstance) {
     },
   );
 
+  // DELETE /by-key/:key — delete variable by key
+  r.delete("/by-key/:key", { preHandler: [requireAuth] }, async (req, reply) => {
+    const { key } = req.params as { key: string };
+    const variable = await getVariableByKey(key);
+    if (!variable) return reply.code(400).send({ error: "not_found", message: "Variable not found" });
+
+    await deleteVariable(variable.id);
+    return reply.send({ key, deleted: true });
+  });
+
   // DELETE /flush — flush all variables
   r.delete("/flush", { preHandler: [requireAuth] }, async (_req, reply) => {
     const result = await flushAllVariables();

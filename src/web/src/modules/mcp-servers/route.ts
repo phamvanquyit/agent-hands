@@ -23,5 +23,5 @@ export const routes: ModuleRoute[] = [
 export const nav: ModuleNav = {
   label: "MCP Servers",
   icon: "plug",
-  order: 5,
+  order: 8,
 };

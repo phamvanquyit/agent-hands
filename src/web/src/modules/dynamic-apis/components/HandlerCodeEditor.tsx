@@ -1,7 +1,7 @@
 import Editor, { DiffEditor, type Monaco } from "@monaco-editor/react";
 import { Dropdown } from "antd";
-import { BookOpen, Check, WrapText, X } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { BookOpen, Check, X } from "lucide-react";
+import { useCallback, useRef } from "react";
 
 type EditorInstance = Parameters<NonNullable<React.ComponentProps<typeof Editor>["onMount"]>>[0];
 type MonacoInstance = Parameters<NonNullable<React.ComponentProps<typeof Editor>["onMount"]>>[1];
@@ -391,7 +391,6 @@ declare var context: {
 }
 
 export function HandlerCodeEditor({ value, onChange, pendingCode, onAcceptPending, onRejectPending }: HandlerCodeEditorProps) {
-  const [wordWrap, setWordWrap] = useState(true);
   const editorRef = useRef<EditorInstance | null>(null);
   const diffEditorRef = useRef<any>(null);
   const monacoRef = useRef<Monaco | null>(null);
@@ -417,36 +416,8 @@ export function HandlerCodeEditor({ value, onChange, pendingCode, onAcceptPendin
         <div className="flex items-center gap-2">
           <label className="font-mono text-[10px] text-muted-soft uppercase tracking-wider">Handler Code (JavaScript)</label>
           {hasPending && <span className="font-mono text-[10px] text-[#8b5cf6] bg-[#8b5cf620] px-1.5 py-0.5 rounded">AI Changes Pending</span>}
-        </div>
+        </div>{" "}
         <div className="flex items-center gap-1.5">
-          {hasPending && (
-            <>
-              <button
-                onClick={onAcceptPending}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono text-[#1f8a65] bg-[#1f8a6520] border border-[#1f8a6540] cursor-pointer transition-colors hover:bg-[#1f8a6530]"
-              >
-                <Check size={11} />
-                Accept
-              </button>
-              <button
-                onClick={onRejectPending}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono text-[#cf2d56] bg-[#cf2d5620] border border-[#cf2d5640] cursor-pointer transition-colors hover:bg-[#cf2d5630]"
-              >
-                <X size={11} />
-                Reject
-              </button>
-            </>
-          )}
-          <button
-            onClick={() => setWordWrap(!wordWrap)}
-            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono bg-transparent border cursor-pointer transition-colors ${
-              wordWrap ? "text-[#8b5cf6] border-[#8b5cf640]" : "text-muted-soft border-hairline hover:border-hairline-strong hover:text-ink"
-            }`}
-            title="Toggle word wrap"
-          >
-            <WrapText size={11} />
-            Wrap
-          </button>
           <Dropdown
             menu={{
               items: EXAMPLES.map((ex) => ({
@@ -476,12 +447,12 @@ export function HandlerCodeEditor({ value, onChange, pendingCode, onAcceptPendin
               minimap: { enabled: false },
               fontSize: 13,
               lineHeight: 1.6,
-              padding: { top: 12, bottom: 12 },
+              padding: { top: 12, bottom: 48 },
               scrollBeyondLastLine: false,
               automaticLayout: true,
               readOnly: true,
               renderSideBySide: false,
-              wordWrap: wordWrap ? "on" : "off",
+              wordWrap: "off",
               fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace",
               fontLigatures: true,
             }}
@@ -504,7 +475,7 @@ export function HandlerCodeEditor({ value, onChange, pendingCode, onAcceptPendin
               scrollBeyondLastLine: false,
               automaticLayout: true,
               stickyScroll: { enabled: false },
-              wordWrap: wordWrap ? "on" : "off",
+              wordWrap: "off",
               renderLineHighlight: "line",
               cursorBlinking: "smooth",
               smoothScrolling: true,
@@ -517,6 +488,25 @@ export function HandlerCodeEditor({ value, onChange, pendingCode, onAcceptPendin
             }}
           />
         </div>
+
+        {hasPending && (
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 px-2.5 py-2 rounded-md bg-[#181818] border border-[#2d2d2d] shadow-[0_8px_24px_rgba(0,0,0,0.5)]">
+            <button
+              onClick={onAcceptPending}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded font-mono text-[12px] font-medium text-[#1f8a65] bg-[#1f8a6515] border border-[#1f8a6530] hover:bg-[#1f8a6525] cursor-pointer transition-colors"
+            >
+              <Check size={12} className="text-[#1f8a65]" />
+              Accept
+            </button>
+            <button
+              onClick={onRejectPending}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded font-mono text-[12px] font-medium text-[#cf2d56] bg-[#cf2d5615] border border-[#cf2d5630] hover:bg-[#cf2d5625] cursor-pointer transition-colors"
+            >
+              <X size={12} className="text-[#cf2d56]" />
+              Reject
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

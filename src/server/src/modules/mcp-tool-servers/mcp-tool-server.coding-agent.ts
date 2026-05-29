@@ -11,6 +11,7 @@ import { END, MessagesAnnotation, START, StateGraph } from "@langchain/langgraph
 import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
 import TurndownService from "turndown";
 import { z } from "zod";
+import { fetchBrowser } from "../../common/utils/fetch-browser.js";
 import { getChatModelForProvider } from "../llm-providers/llm-provider.chat.js";
 import { executeMcpTool } from "./mcp-tool-executor.js";
 import { getMcpToolById, updateMcpTool } from "./mcp-tool-server.service.js";
@@ -74,10 +75,7 @@ async function testToolCode(
 
 async function fetchWebContent(url: string, mode: "raw" | "md" = "raw"): Promise<string> {
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(url, { signal: controller.signal, headers: { "User-Agent": "AgentHands/1.0" } });
-    clearTimeout(timeout);
+    const res = await fetchBrowser(url);
     if (!res.ok) return `HTTP Error ${res.status}: ${res.statusText}`;
     const contentType = res.headers.get("content-type") || "";
     if (contentType.includes("application/json")) {

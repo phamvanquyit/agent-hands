@@ -27,6 +27,7 @@ import m0019 from "./0019_mcp_tool_logs.js";
 import m0020 from "./0020_remove_variable_namespaces.js";
 import m0021 from "./0021_mcp_tools_draft_code.js";
 import m0022 from "./0022_rebrand_agent_hands.js";
+import m0023 from "./0023_dynamic_apis_draft_code.js";
 
 import type { Migration } from "../migrate.js";
 
@@ -53,5 +54,6 @@ export const migrations: Migration[] = [
   m0020,
   m0021,
   m0022,
+  m0023,
 ];
 

@@ -1,5 +1,5 @@
 import { Modal, Spin, Tabs, message } from "antd";
-import { AlertTriangle, BookOpen, Bot, Clock, PanelRightClose, PanelRightOpen, Play, Terminal } from "lucide-react";
+import { AlertTriangle, Bot, Clock, PanelRightClose, PanelRightOpen, Play, Terminal } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { API_BASE, client } from "src/lib/client";
@@ -9,7 +9,6 @@ import type { DynamicApiItem, DynamicApiLogItem } from "src/lib/types";
 import { AiCodingPanel } from "../components/AiCodingPanel";
 import { EndpointHeader } from "../components/EndpointHeader";
 import { HandlerCodeEditor } from "../components/HandlerCodeEditor";
-import { HandlerSdkReference } from "../components/HandlerSdkReference";
 import { LogsPanel } from "../components/LogsPanel";
 import { TestPanel } from "../components/TestPanel";
 
@@ -39,7 +38,6 @@ export default function DynamicApiDetailPage() {
   const [api, setApi] = useState<DynamicApiItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [dirty, setDirty] = useState(false);
 
   // Form state
   const [name, setName] = useState("");
@@ -81,6 +79,10 @@ export default function DynamicApiDetailPage() {
   // AI pending code (for diff review)
   const [pendingCode, setPendingCode] = useState<string | null>(null);
 
+  // Dirty tracking via savedCodeRef (same pattern as MCP useToolEditor)
+  const savedCodeRef = useRef(DEFAULT_CODE);
+  const isDirty = code !== savedCodeRef.current;
+
   // ── Data Fetching ──────────────────────────────────────────────────────────
 
   const fetchApi = useCallback(async () => {
@@ -93,10 +95,15 @@ export default function DynamicApiDetailPage() {
       setMethod(data.method);
       setPath(data.path);
       setCode(data.code || DEFAULT_CODE);
+      savedCodeRef.current = data.code || DEFAULT_CODE;
       setIsActive(data.isActive);
       setIsPublic(data.isPublic);
       setTimeoutVal(data.timeout);
-      setDirty(false);
+
+      // If there's a pending draft from AI, show it as a diff
+      if (data.draftCode && data.draftCode !== data.code) {
+        setPendingCode(data.draftCode);
+      }
     } catch {
       message.error("Failed to load API");
       navigate("/dynamic-apis");
@@ -137,20 +144,17 @@ export default function DynamicApiDetailPage() {
 
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
-      if (dirty) e.preventDefault();
+      if (isDirty) e.preventDefault();
     };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
-  }, [dirty]);
+  }, [isDirty]);
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
-  const markDirty = () => {
-    if (!dirty) setDirty(true);
-  };
-
-  const handleSave = async () => {
+  const handleSave = async (codeOverride?: string) => {
     if (!id || saving) return;
+    const codeToSave = codeOverride ?? code;
     setSaving(true);
     try {
       const updated = await client.dynamicApis.update(id, {
@@ -158,13 +162,14 @@ export default function DynamicApiDetailPage() {
         method,
         path,
         description: null,
-        code,
+        code: codeToSave,
+        draftCode: codeToSave, // Keep draft in sync with prod
         isActive,
         isPublic,
         timeout,
       });
       setApi(updated);
-      setDirty(false);
+      savedCodeRef.current = codeToSave;
       message.success("Saved");
     } catch (err) {
       if (err instanceof AgentHandsError) message.error(err.message);
@@ -199,7 +204,10 @@ export default function DynamicApiDetailPage() {
     setTesting(true);
     setTestResult(null);
     try {
-      // Dry-run: send current editor code to test endpoint
+      // Save current editor code as draftCode first (same pattern as MCP tools)
+      await client.dynamicApis.update(api.id, { draftCode: code });
+
+      // Dry-run: test the draft code from DB
       const url = `${API_BASE || ""}/api/dynamic-apis/${api.id}/test`;
       const token = localStorage.getItem("access_token");
 
@@ -219,9 +227,7 @@ export default function DynamicApiDetailPage() {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
-          code,
-          method,
-          path,
+          source: "draft",
           params,
           query,
           headers,
@@ -238,6 +244,37 @@ export default function DynamicApiDetailPage() {
       });
     } finally {
       setTesting(false);
+    }
+  };
+
+  // ── AI code apply handler (same flow as MCP tools) ───────────────────────
+  const handleApplyCode = useCallback(
+    (newCode: string, isFinal?: boolean) => {
+      if (isFinal) {
+        setCode(newCode);
+        setPendingCode(null);
+      } else {
+        setPendingCode(newCode);
+      }
+    },
+    [],
+  );
+
+  // ── Pending code accept/reject (same flow as MCP tools) ──────────────────
+  const handleAcceptPending = async () => {
+    if (pendingCode) {
+      setCode(pendingCode);
+      setPendingCode(null);
+      // Promote draft → official code and clear draftCode
+      await handleSave(pendingCode);
+    }
+  };
+
+  const handleRejectPending = async () => {
+    setPendingCode(null);
+    // Reset draftCode back to prod code in DB
+    if (id) {
+      client.dynamicApis.update(id, { draftCode: savedCodeRef.current }).catch(() => {});
     }
   };
 
@@ -291,7 +328,7 @@ export default function DynamicApiDetailPage() {
     <div className="flex flex-col h-full overflow-hidden bg-canvas">
       <EndpointHeader
         baseUrl={baseUrl}
-        dirty={dirty}
+        dirty={isDirty}
         saving={saving}
         isActive={isActive}
         name={name}
@@ -304,27 +341,21 @@ export default function DynamicApiDetailPage() {
         onSave={handleSave}
         onActiveChange={(checked) => {
           setIsActive(checked);
-          markDirty();
         }}
         onNameChange={(v) => {
           setName(v);
-          markDirty();
         }}
         onMethodChange={(v) => {
           setMethod(v);
-          markDirty();
         }}
         onPathChange={(v) => {
           setPath(v);
-          markDirty();
         }}
         onPublicChange={(v) => {
           setIsPublic(v);
-          markDirty();
         }}
         onTimeoutChange={(v) => {
           setTimeoutVal(v);
-          markDirty();
         }}
       />
 
@@ -367,21 +398,10 @@ export default function DynamicApiDetailPage() {
                   <div className="flex flex-col overflow-hidden" style={{ height: "calc(100vh - 160px)" }}>
                     <HandlerCodeEditor
                       value={code}
-                      onChange={(v) => {
-                        setCode(v);
-                        markDirty();
-                      }}
+                      onChange={setCode}
                       pendingCode={pendingCode}
-                      onAcceptPending={() => {
-                        if (pendingCode) {
-                          setCode(pendingCode);
-                          markDirty();
-                        }
-                        setPendingCode(null);
-                      }}
-                      onRejectPending={() => {
-                        setPendingCode(null);
-                      }}
+                      onAcceptPending={handleAcceptPending}
+                      onRejectPending={handleRejectPending}
                     />
                   </div>
                 ),
@@ -415,19 +435,6 @@ export default function DynamicApiDetailPage() {
                 ),
                 children: <LogsPanel logs={logs} loading={logsLoading} onRefresh={fetchLogs} />,
               },
-              {
-                key: "sdk",
-                label: (
-                  <span className="flex items-center gap-1.5 font-mono text-[12px]">
-                    <BookOpen size={13} /> SDK Reference
-                  </span>
-                ),
-                children: (
-                  <div className="overflow-y-auto px-5 pb-8" style={{ maxHeight: "calc(100vh - 212px)" }}>
-                    <HandlerSdkReference />
-                  </div>
-                ),
-              },
             ]}
             onChange={(key) => {
               if (key === "logs") fetchLogs();
@@ -452,9 +459,7 @@ export default function DynamicApiDetailPage() {
                 method={method}
                 path={path}
                 currentCode={code}
-                onApplyCode={(newCode) => {
-                  setPendingCode(newCode);
-                }}
+                onApplyCode={handleApplyCode}
               />
             </div>
           </>
