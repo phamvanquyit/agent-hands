@@ -33,7 +33,7 @@ async function getChromium() {
     throw new Error(
       "Browser feature requires the 'playwright' package.\n" +
       "Install it with:\n" +
-      "  bun add playwright && npx playwright install chromium\n" +
+      "  bun add playwright && npx playwright install --with-deps chromium\n" +
       "Then restart the server."
     );
   }

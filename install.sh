@@ -169,11 +169,11 @@ if [ "${SKIP_BROWSER:-}" = "true" ]; then
   info "Skipping Playwright browser install (SKIP_BROWSER=true)"
 else
   info "Installing Playwright browser for Browser Profiles feature..."
-  if (cd "$INSTALL_DIR" && bun add playwright 2>/dev/null && bunx playwright install chromium 2>/dev/null); then
+  if (cd "$INSTALL_DIR" && bun add playwright >/dev/null && bunx playwright install --with-deps chromium); then
     success "Chromium browser installed — Browser Profiles feature is ready"
   else
     warn "Could not install Playwright/Chromium. Browser Profiles feature will not be available."
-    warn "To enable it later:  cd $INSTALL_DIR && bun add playwright && npx playwright install chromium"
+    warn "To enable it later:  cd $INSTALL_DIR && bun add playwright && npx playwright install --with-deps chromium"
   fi
 fi
 
