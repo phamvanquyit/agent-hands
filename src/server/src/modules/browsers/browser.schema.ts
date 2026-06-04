@@ -50,7 +50,55 @@ export const listProfilesQuerySchema = z.object({
   search: z.string().optional(),
 });
 
-// Control browser actions schema
+// ── All supported step actions ──────────────────────────────────────────────────
+export const STEP_ACTIONS = [
+  "navigate",
+  "click",
+  "type",
+  "screenshot",
+  "get_content",
+  "eval",
+  "wait",
+  "sleep",
+  "scroll",
+  "select",
+  "press_key",
+  "hover",
+  "extract_text",
+  "get_snapshot",
+  "get_interactive_elements",
+] as const;
+
+// ── Selector type for smart element resolution ──────────────────────────────────
+export const SELECTOR_TYPES = [
+  "css",
+  "text",
+  "role",
+  "label",
+  "placeholder",
+  "testid",
+] as const;
+
+// ── Step schema shared by run_steps and quick_run ───────────────────────────────
+export const stepSchema = z.object({
+  action: z.enum(STEP_ACTIONS),
+  url: z.string().optional(),
+  selector: z.string().optional(),
+  text: z.string().optional(),
+  code: z.string().optional(),
+  timeout: z.number().int().min(0).optional(),
+  // Smart selector type (default: css)
+  selectorType: z.enum(SELECTOR_TYPES).optional(),
+  // For press_key action
+  key: z.string().optional(),
+  // For select action
+  value: z.string().optional(),
+  // For scroll action
+  direction: z.enum(["up", "down", "top", "bottom"]).optional(),
+  amount: z.number().int().min(0).optional(),
+});
+
+// Control browser actions schema (legacy single-action endpoint)
 export const controlProfileBodySchema = z.object({
   action: z.enum(["navigate", "click", "type", "screenshot", "get_content", "eval", "open_tab", "close_tab"]),
   tabIndex: z.number().int().min(0).optional(),
@@ -64,18 +112,9 @@ export const controlProfileBodySchema = z.object({
 export const runStepsBodySchema = z.object({
   profileId: z.string().optional().nullable(),
   tabIndex: z.number().int().min(0).optional(),
-  steps: z
-    .array(
-      z.object({
-        action: z.enum(["navigate", "click", "type", "screenshot", "get_content", "eval", "wait"]),
-        url: z.string().optional(),
-        selector: z.string().optional(),
-        text: z.string().optional(),
-        code: z.string().optional(),
-        timeout: z.number().int().min(0).optional(),
-      })
-    )
-    .min(1, "At least one step is required"),
+  steps: z.array(stepSchema).min(1, "At least one step is required"),
+  continueOnError: z.boolean().optional().default(false),
+  includePageState: z.boolean().optional().default(false),
 });
 
 // Typings derived from schemas
@@ -86,4 +125,7 @@ export type UpdateProfileBody = z.infer<typeof updateProfileBodySchema>;
 export type ListProfilesQuery = z.infer<typeof listProfilesQuerySchema>;
 export type ControlProfileBody = z.infer<typeof controlProfileBodySchema>;
 export type RunStepsBody = z.infer<typeof runStepsBodySchema>;
+export type StepAction = (typeof STEP_ACTIONS)[number];
+export type SelectorType = (typeof SELECTOR_TYPES)[number];
+export type Step = z.infer<typeof stepSchema>;
 export type BrowserProfileStatus = "idle" | "running" | "error";

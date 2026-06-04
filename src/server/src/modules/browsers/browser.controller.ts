@@ -1,5 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { requireAuth } from "../../common/auth/middleware.js";
 import {
   createProfileBodySchema,
@@ -24,6 +26,7 @@ import {
   captureScreenshot,
   getActiveTabs,
   runBatchSteps,
+  getScreenshotsDir,
 } from "./browser.service.js";
 
 export function registerBrowserRoutes(app: FastifyInstance) {
@@ -170,4 +173,22 @@ export function registerBrowserRoutes(app: FastifyInstance) {
       }
     },
   );
+
+  // GET /screenshots/:filename — Serve saved screenshot PNG files
+  r.get("/screenshots/:filename", async (req, reply) => {
+    const { filename } = req.params as { filename: string };
+
+    // Sanitize filename to prevent directory traversal
+    if (filename.includes("..") || filename.includes("/") || !filename.endsWith(".png")) {
+      return reply.code(400).send({ error: "bad_request", message: "Invalid filename" });
+    }
+
+    const filepath = join(getScreenshotsDir(), filename);
+    if (!existsSync(filepath)) {
+      return reply.code(404).send({ error: "not_found", message: "Screenshot not found or expired" });
+    }
+
+    const buf = readFileSync(filepath);
+    return reply.header("Content-Type", "image/png").header("Cache-Control", "public, max-age=3600").send(buf);
+  });
 }

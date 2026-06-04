@@ -1,6 +1,6 @@
 {
   "name": "agent-hands-server",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "type": "module",
   "private": true,
   "scripts": {
@@ -27,12 +27,13 @@
     "@modelcontextprotocol/sdk": "^1.10.2",
     "@types/turndown": "^5.0.6",
     "ai": "^6.0.184",
+    "cloakbrowser": "^0.3.31",
     "drizzle-orm": "^0.45.1",
     "fastify": "^5.3.2",
     "fastify-type-provider-zod": "^4.0.2",
     "jose": "^6.0.10",
     "nanoid": "^5.1.5",
-    "playwright": "^1.60.0",
+    "playwright-core": "^1.60.0",
     "turndown": "^7.2.4",
     "zod": "^3.24.4"
   },

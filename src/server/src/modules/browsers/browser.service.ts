@@ -1,13 +1,11 @@
-// NOTE: playwright is loaded lazily via getChromium() to avoid crashing the
-// server when the package is not installed. All browser operations call
-// getChromium() which will throw a clear error if playwright is missing.
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createServer } from "node:net";
 import { getDb } from "../../common/db/client.js";
 import { browserProfiles, users } from "../../common/db/schema.js";
 import { eq, like, and, sql } from "drizzle-orm";
 import { genId } from "../../common/utils.js";
+import { launchPersistentContext, ensureBinary, clearCache, binaryInfo } from "cloakbrowser";
 import type {
   CreateProfileBody,
   UpdateProfileBody,
@@ -16,37 +14,60 @@ import type {
   FingerprintConfig,
   ControlProfileBody,
   RunStepsBody,
+  Step,
+  SelectorType,
 } from "./browser.schema.js";
 
-// ── Lazy Playwright loader ──────────────────────────────────────────────────────
-// Playwright is an optional dependency. If not installed, all non-browser
-// features continue working. Browser endpoints return a friendly error.
-let _chromium: any = null;
+// ── CloakBrowser integration ────────────────────────────────────────────────────
+// CloakBrowser wraps Playwright with a stealth Chromium binary that passes bot
+// detection. Binary auto-downloads on first use (~200MB, cached locally).
+// No manual `npx playwright install` needed.
 
-async function getChromium() {
-  if (_chromium) return _chromium;
-  try {
-    const pw = await import("playwright");
-    _chromium = pw.chromium;
-    return _chromium;
-  } catch {
-    throw new Error(
-      "Browser feature requires the 'playwright' package.\n" +
-      "Install it with:\n" +
-      "  bun add playwright && npx playwright install --with-deps chromium\n" +
-      "Then restart the server."
-    );
-  }
-}
-
-/** Check if playwright is available without throwing */
+/** Check if CloakBrowser is available and binary is installed */
 export async function isPlaywrightAvailable(): Promise<boolean> {
   try {
-    await getChromium();
-    return true;
+    const info = binaryInfo();
+    return info.installed;
   } catch {
     return false;
   }
+}
+
+/** Get CloakBrowser binary info (version, platform, installed status, paths) */
+export async function getCloakBinaryInfo(): Promise<any> {
+  try {
+    return binaryInfo();
+  } catch (err: any) {
+    return { installed: false, error: err.message };
+  }
+}
+
+/** Force re-download CloakBrowser binary */
+export async function clearCloakCache(): Promise<void> {
+  clearCache();
+}
+
+/**
+ * Pre-download CloakBrowser stealth Chromium binary at server startup.
+ * Runs in background — does not block server boot.
+ */
+export function preloadCloakBrowser(): void {
+  (async () => {
+    try {
+      const info = binaryInfo();
+      if (info.installed) {
+        console.log(`[browser] ✔ CloakBrowser stealth Chromium ${info.version} ready (${info.platform})`);
+        return;
+      }
+      console.log("[browser] CloakBrowser binary not found. Downloading stealth Chromium...");
+      await ensureBinary();
+      const updatedInfo = binaryInfo();
+      console.log(`[browser] ✔ CloakBrowser stealth Chromium ${updatedInfo.version} downloaded successfully`);
+    } catch (err: any) {
+      console.warn(`[browser] ⚠ CloakBrowser binary pre-download failed: ${err.message}`);
+      console.warn("[browser]   Binary will be downloaded on first browser use instead.");
+    }
+  })();
 }
 
 // Cache for active contexts in memory
@@ -107,6 +128,59 @@ setInterval(async () => {
 // Base directory for profile storage
 const dataDir = process.env.DATA_DIR ?? `${process.env.HOME}/.agent-hands`;
 const PROFILES_BASE_DIR = join(dataDir, "browser-profiles");
+
+// ── Screenshot file storage ─────────────────────────────────────────────────────
+const SCREENSHOTS_DIR = join(dataDir, "browser-screenshots");
+const SCREENSHOT_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
+
+// Ensure screenshots directory exists
+mkdirSync(SCREENSHOTS_DIR, { recursive: true });
+
+/** Save screenshot buffer to file, return path and URL */
+export function saveScreenshotToFile(buf: Buffer): { path: string; url: string; filename: string } {
+  const random = Math.random().toString(36).substring(2, 8);
+  const filename = `screenshot_${Date.now()}_${random}.png`;
+  const filepath = join(SCREENSHOTS_DIR, filename);
+  writeFileSync(filepath, buf);
+  return {
+    path: filepath,
+    url: `/api/browsers/screenshots/${filename}`,
+    filename,
+  };
+}
+
+/** Get the screenshots directory path */
+export function getScreenshotsDir(): string {
+  return SCREENSHOTS_DIR;
+}
+
+// Screenshot cleanup sweeper — runs every 10 minutes, deletes files > 1 hour old
+setInterval(() => {
+  try {
+    if (!existsSync(SCREENSHOTS_DIR)) return;
+    const now = Date.now();
+    const files = readdirSync(SCREENSHOTS_DIR);
+    let cleaned = 0;
+    for (const file of files) {
+      if (!file.endsWith(".png")) continue;
+      const filepath = join(SCREENSHOTS_DIR, file);
+      try {
+        const stat = statSync(filepath);
+        if (now - stat.mtimeMs > SCREENSHOT_MAX_AGE_MS) {
+          unlinkSync(filepath);
+          cleaned++;
+        }
+      } catch {
+        // Ignore individual file errors
+      }
+    }
+    if (cleaned > 0) {
+      console.log(`[screenshot-sweeper] Cleaned up ${cleaned} expired screenshot(s)`);
+    }
+  } catch (err) {
+    console.error("[screenshot-sweeper] Error during cleanup:", err);
+  }
+}, 10 * 60 * 1000); // Every 10 minutes
 
 /** Find an available random port for CDP debugging */
 async function getFreePort(): Promise<number> {
@@ -345,18 +419,13 @@ export async function startBrowser(id: string) {
   const args = [
     `--remote-debugging-port=${cdpPort}`,
     `--remote-debugging-address=127.0.0.1`,
-    `--disable-blink-features=AutomationControlled`,
   ];
 
+  // Build CloakBrowser launch options
   const launchOptions: any = {
-    args,
     headless: true, // Default to headless mode for reliable background running
+    args,
   };
-
-  // Bind custom stealth path (CloakBrowser custom compiled Chromium) if configured
-  if (process.env.CLOAK_BROWSER_PATH && existsSync(process.env.CLOAK_BROWSER_PATH)) {
-    launchOptions.executablePath = process.env.CLOAK_BROWSER_PATH;
-  }
 
   if (proxy) {
     launchOptions.proxy = {
@@ -369,20 +438,19 @@ export async function startBrowser(id: string) {
   if (fingerprint) {
     if (fingerprint.userAgent) launchOptions.userAgent = fingerprint.userAgent;
     if (fingerprint.viewport) launchOptions.viewport = fingerprint.viewport;
-    if (fingerprint.locale) {
-      launchOptions.locale = fingerprint.locale;
-      launchOptions.args.push(`--lang=${fingerprint.locale}`);
-    }
-    if (fingerprint.timezoneId) launchOptions.timezoneId = fingerprint.timezoneId;
+    // CloakBrowser routes locale/timezone through binary flags (undetectable)
+    if (fingerprint.locale) launchOptions.locale = fingerprint.locale;
+    if (fingerprint.timezoneId) launchOptions.timezone = fingerprint.timezoneId;
     if (fingerprint.geolocation) {
-      launchOptions.geolocation = fingerprint.geolocation;
-      launchOptions.permissions = ["geolocation"];
+      launchOptions.contextOptions = {
+        geolocation: fingerprint.geolocation,
+        permissions: ["geolocation"],
+      };
     }
   }
 
-  // Launch persistent context via Playwright (lazy-loaded)
-  const chromium = await getChromium();
-  const context = await chromium.launchPersistentContext(profile.userDataDir, launchOptions);
+  // Launch persistent context via CloakBrowser (stealth Chromium, auto-downloads binary)
+  const context = await launchPersistentContext({ ...launchOptions, userDataDir: profile.userDataDir });
 
   try {
     const wsEndpoint = await getWsEndpoint(cdpPort);
@@ -567,8 +635,230 @@ export async function executeBrowserAction(id: string, body: ControlProfileBody)
   }
 }
 
+// ── Smart Locator Resolution ────────────────────────────────────────────────────
+
+/**
+ * Resolve a Playwright locator based on selectorType.
+ * Default: CSS selector. Supports text, role, label, placeholder, testid.
+ */
+function resolveLocator(page: any, selector: string, selectorType?: SelectorType) {
+  switch (selectorType) {
+    case "text":
+      return page.getByText(selector, { exact: false }).first();
+    case "role":
+      return page.getByRole(selector).first();
+    case "label":
+      return page.getByLabel(selector).first();
+    case "placeholder":
+      return page.getByPlaceholder(selector).first();
+    case "testid":
+      return page.getByTestId(selector).first();
+    case "css":
+    default:
+      return page.locator(selector).first();
+  }
+}
+
+// ── Shared Step Executor ────────────────────────────────────────────────────────
+
+/**
+ * Execute a single browser step on a page. Returns the step result object.
+ * Used by both persistent (profile) and ephemeral modes.
+ */
+async function executeStep(page: any, step: Step, stepTimeout: number): Promise<any> {
+  switch (step.action) {
+    case "navigate": {
+      if (!step.url) throw new Error("URL is required for navigate action");
+      await page.goto(step.url, { waitUntil: "domcontentloaded", timeout: stepTimeout });
+      return { url: page.url(), title: await page.title().catch(() => "Untitled") };
+    }
+
+    case "click": {
+      if (!step.selector && !step.text) throw new Error("selector or text is required for click action");
+      if (step.text && !step.selector) {
+        // Click by visible text
+        const locator = page.getByText(step.text, { exact: false }).first();
+        await locator.waitFor({ state: "visible", timeout: stepTimeout });
+        await locator.click({ timeout: stepTimeout });
+      } else {
+        const locator = resolveLocator(page, step.selector!, step.selectorType);
+        await locator.waitFor({ state: "visible", timeout: stepTimeout });
+        await locator.click({ timeout: stepTimeout });
+      }
+      return { success: true };
+    }
+
+    case "type": {
+      if (!step.selector) throw new Error("selector is required for type action");
+      if (step.text === undefined) throw new Error("text is required for type action");
+      const locator = resolveLocator(page, step.selector, step.selectorType);
+      await locator.waitFor({ state: "visible", timeout: stepTimeout });
+      await locator.fill(step.text);
+      return { success: true };
+    }
+
+    case "wait": {
+      if (!step.selector && !step.text) throw new Error("selector or text is required for wait action");
+      if (step.text && !step.selector) {
+        await page.getByText(step.text, { exact: false }).first().waitFor({ state: "visible", timeout: stepTimeout });
+      } else {
+        const locator = resolveLocator(page, step.selector!, step.selectorType);
+        await locator.waitFor({ state: "visible", timeout: stepTimeout });
+      }
+      return { success: true };
+    }
+
+    case "sleep": {
+      const ms = step.timeout ?? 1000;
+      await page.waitForTimeout(ms);
+      return { sleptMs: ms };
+    }
+
+    case "scroll": {
+      const direction = step.direction ?? "down";
+      const amount = step.amount ?? 500;
+      switch (direction) {
+        case "top":
+          await page.evaluate(() => window.scrollTo(0, 0));
+          break;
+        case "bottom":
+          await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+          break;
+        case "down":
+          await page.evaluate((px: number) => window.scrollBy(0, px), amount);
+          break;
+        case "up":
+          await page.evaluate((px: number) => window.scrollBy(0, -px), amount);
+          break;
+      }
+      return { scrolled: direction, pixels: amount };
+    }
+
+    case "select": {
+      if (!step.selector) throw new Error("selector is required for select action");
+      if (!step.value) throw new Error("value is required for select action");
+      const locator = resolveLocator(page, step.selector, step.selectorType);
+      await locator.selectOption(step.value, { timeout: stepTimeout });
+      return { success: true };
+    }
+
+    case "press_key": {
+      if (!step.key) throw new Error("key is required for press_key action");
+      if (step.selector) {
+        const locator = resolveLocator(page, step.selector, step.selectorType);
+        await locator.press(step.key, { timeout: stepTimeout });
+      } else {
+        await page.keyboard.press(step.key);
+      }
+      return { pressed: step.key };
+    }
+
+    case "hover": {
+      if (!step.selector) throw new Error("selector is required for hover action");
+      const locator = resolveLocator(page, step.selector, step.selectorType);
+      await locator.hover({ timeout: stepTimeout });
+      return { success: true };
+    }
+
+    case "extract_text": {
+      if (!step.selector) throw new Error("selector is required for extract_text action");
+      const locator = resolveLocator(page, step.selector, step.selectorType);
+      const text = await locator.textContent({ timeout: stepTimeout });
+      return { text: text?.trim() ?? null };
+    }
+
+    case "screenshot": {
+      const buf = await page.screenshot({ type: "png" });
+      const saved = saveScreenshotToFile(buf);
+      return { url: saved.url, filename: saved.filename };
+    }
+
+    case "get_content": {
+      return {
+        url: page.url(),
+        title: await page.title().catch(() => "Untitled"),
+        content: await page.content(),
+      };
+    }
+
+    case "get_snapshot": {
+      const snapshot = await page.locator("body").ariaSnapshot();
+      return {
+        url: page.url(),
+        title: await page.title().catch(() => "Untitled"),
+        snapshot,
+      };
+    }
+
+    case "get_interactive_elements": {
+      const elements = await page.evaluate(() => {
+        const interactable = document.querySelectorAll(
+          'a[href], button, input, select, textarea, [role="button"], [role="link"], [role="checkbox"], [role="radio"], [role="tab"], [role="menuitem"], [onclick], [tabindex]:not([tabindex="-1"])'
+        );
+        return Array.from(interactable).slice(0, 100).map((el, i) => {
+          const rect = el.getBoundingClientRect();
+          const isVisible = rect.height > 0 && rect.width > 0;
+          const tag = el.tagName.toLowerCase();
+          // Build a reliable CSS selector
+          let cssSelector = tag;
+          if (el.id) cssSelector = `#${el.id}`;
+          else if (el.getAttribute("name")) cssSelector = `${tag}[name="${el.getAttribute("name")}"]`;
+          else if (el.getAttribute("data-testid")) cssSelector = `[data-testid="${el.getAttribute("data-testid")}"]`;
+
+          return {
+            index: i,
+            tag,
+            type: el.getAttribute("type"),
+            role: el.getAttribute("role"),
+            text: (el.textContent || "").trim().substring(0, 80) || null,
+            placeholder: el.getAttribute("placeholder"),
+            ariaLabel: el.getAttribute("aria-label"),
+            name: el.getAttribute("name"),
+            id: el.id || null,
+            href: el.getAttribute("href"),
+            selector: cssSelector,
+            visible: isVisible,
+          };
+        });
+      });
+      return { count: elements.length, elements: elements.filter((e: any) => e.visible) };
+    }
+
+    case "eval": {
+      if (!step.code) throw new Error("code is required for eval action");
+      const evalResult = await page.evaluate(step.code);
+      return { result: evalResult };
+    }
+
+    default:
+      throw new Error(`Unsupported step action: ${(step as any).action}`);
+  }
+}
+
+/**
+ * Get current page state summary (URL + title + focused element).
+ */
+async function getPageState(page: any): Promise<any> {
+  return {
+    url: page.url(),
+    title: await page.title().catch(() => ""),
+    focusedElement: await page.evaluate(() => {
+      const el = document.activeElement;
+      if (!el || el === document.body) return null;
+      return {
+        tag: el.tagName.toLowerCase(),
+        id: el.id || null,
+        name: el.getAttribute("name"),
+        type: el.getAttribute("type"),
+      };
+    }).catch(() => null),
+  };
+}
+
+// ── Batch Step Runner ───────────────────────────────────────────────────────────
+
 export async function runBatchSteps(body: RunStepsBody) {
-  const { profileId, tabIndex, steps } = body;
+  const { profileId, tabIndex, steps, continueOnError, includePageState } = body;
   const defaultTimeout = 10000;
 
   if (profileId) {
@@ -619,69 +909,15 @@ export async function runBatchSteps(body: RunStepsBody) {
         touchActivity(profileId);
 
         try {
-          let stepResult: any = null;
-          switch (step.action) {
-            case "navigate": {
-              if (!step.url) throw new Error("URL is required for navigate action");
-              await page.goto(step.url, { waitUntil: "domcontentloaded", timeout: stepTimeout });
-              stepResult = { url: page.url(), title: await page.title().catch(() => "Untitled") };
-              break;
-            }
-            case "click": {
-              if (!step.selector && !step.text) throw new Error("selector or text is required for click action");
-              if (step.text) {
-                const locator = page.getByText(step.text, { exact: false }).first();
-                await locator.waitFor({ state: "visible", timeout: stepTimeout });
-                await locator.click({ timeout: stepTimeout });
-              } else {
-                const locator = page.locator(step.selector!).first();
-                await locator.waitFor({ state: "visible", timeout: stepTimeout });
-                await locator.click({ timeout: stepTimeout });
-              }
-              stepResult = { success: true };
-              break;
-            }
-            case "type": {
-              if (!step.selector) throw new Error("selector is required for type action");
-              if (step.text === undefined) throw new Error("text is required for type action");
-              const locator = page.locator(step.selector).first();
-              await locator.waitFor({ state: "visible", timeout: stepTimeout });
-              await locator.fill(step.text);
-              stepResult = { success: true };
-              break;
-            }
-            case "wait": {
-              if (!step.selector && !step.text) throw new Error("selector or text is required for wait action");
-              if (step.text) {
-                await page.getByText(step.text, { exact: false }).first().waitFor({ state: "visible", timeout: stepTimeout });
-              } else {
-                await page.locator(step.selector!).first().waitFor({ state: "visible", timeout: stepTimeout });
-              }
-              stepResult = { success: true };
-              break;
-            }
-            case "screenshot": {
-              const buf = await page.screenshot({ type: "png" });
-              stepResult = { base64: buf.toString("base64") };
-              break;
-            }
-            case "get_content": {
-              stepResult = { url: page.url(), title: await page.title().catch(() => "Untitled"), content: await page.content() };
-              break;
-            }
-            case "eval": {
-              if (!step.code) throw new Error("code is required for eval action");
-              const evalResult = await page.evaluate(step.code);
-              stepResult = { result: evalResult };
-              break;
-            }
-            default:
-              throw new Error(`Unsupported step action: ${step.action}`);
+          const stepResult = await executeStep(page, step, stepTimeout);
+          // Optionally inject page state
+          if (includePageState) {
+            stepResult._pageState = await getPageState(page);
           }
           results.push({ step: i + 1, action: step.action, success: true, result: stepResult });
         } catch (err: any) {
           results.push({ step: i + 1, action: step.action, success: false, error: err.message });
-          break; // Stop execution on error
+          if (!continueOnError) break;
         }
       }
       return { profileId, persistent: true, tabIndex: usedTabIndex, results };
@@ -701,18 +937,14 @@ export async function runBatchSteps(body: RunStepsBody) {
     const args = [
       `--remote-debugging-port=${cdpPort}`,
       `--remote-debugging-address=127.0.0.1`,
-      `--disable-blink-features=AutomationControlled`,
     ];
     const launchOptions: any = {
-      args,
       headless: true,
+      args,
     };
-    if (process.env.CLOAK_BROWSER_PATH && existsSync(process.env.CLOAK_BROWSER_PATH)) {
-      launchOptions.executablePath = process.env.CLOAK_BROWSER_PATH;
-    }
 
-    const chromium = await getChromium();
-    const context = await chromium.launchPersistentContext(tempDir, launchOptions);
+    // Launch ephemeral context via CloakBrowser (stealth Chromium, auto-downloads binary)
+    const context = await launchPersistentContext({ ...launchOptions, userDataDir: tempDir });
     const page = context.pages()[0] || (await context.newPage());
     page.setDefaultTimeout(defaultTimeout);
 
@@ -722,69 +954,15 @@ export async function runBatchSteps(body: RunStepsBody) {
         const step = steps[i];
         const stepTimeout = step.timeout ?? defaultTimeout;
         try {
-          let stepResult: any = null;
-          switch (step.action) {
-            case "navigate": {
-              if (!step.url) throw new Error("URL is required for navigate action");
-              await page.goto(step.url, { waitUntil: "domcontentloaded", timeout: stepTimeout });
-              stepResult = { url: page.url(), title: await page.title().catch(() => "Untitled") };
-              break;
-            }
-            case "click": {
-              if (!step.selector && !step.text) throw new Error("selector or text is required for click action");
-              if (step.text) {
-                const locator = page.getByText(step.text, { exact: false }).first();
-                await locator.waitFor({ state: "visible", timeout: stepTimeout });
-                await locator.click({ timeout: stepTimeout });
-              } else {
-                const locator = page.locator(step.selector!).first();
-                await locator.waitFor({ state: "visible", timeout: stepTimeout });
-                await locator.click({ timeout: stepTimeout });
-              }
-              stepResult = { success: true };
-              break;
-            }
-            case "type": {
-              if (!step.selector) throw new Error("selector is required for type action");
-              if (step.text === undefined) throw new Error("text is required for type action");
-              const locator = page.locator(step.selector).first();
-              await locator.waitFor({ state: "visible", timeout: stepTimeout });
-              await locator.fill(step.text);
-              stepResult = { success: true };
-              break;
-            }
-            case "wait": {
-              if (!step.selector && !step.text) throw new Error("selector or text is required for wait action");
-              if (step.text) {
-                await page.getByText(step.text, { exact: false }).first().waitFor({ state: "visible", timeout: stepTimeout });
-              } else {
-                await page.locator(step.selector!).first().waitFor({ state: "visible", timeout: stepTimeout });
-              }
-              stepResult = { success: true };
-              break;
-            }
-            case "screenshot": {
-              const buf = await page.screenshot({ type: "png" });
-              stepResult = { base64: buf.toString("base64") };
-              break;
-            }
-            case "get_content": {
-              stepResult = { url: page.url(), title: await page.title().catch(() => "Untitled"), content: await page.content() };
-              break;
-            }
-            case "eval": {
-              if (!step.code) throw new Error("code is required for eval action");
-              const evalResult = await page.evaluate(step.code);
-              stepResult = { result: evalResult };
-              break;
-            }
-            default:
-              throw new Error(`Unsupported step action: ${step.action}`);
+          const stepResult = await executeStep(page, step, stepTimeout);
+          // Optionally inject page state
+          if (includePageState) {
+            stepResult._pageState = await getPageState(page);
           }
           results.push({ step: i + 1, action: step.action, success: true, result: stepResult });
         } catch (err: any) {
           results.push({ step: i + 1, action: step.action, success: false, error: err.message });
-          break; // Stop execution on error
+          if (!continueOnError) break;
         }
       }
       return { profileId: null, persistent: false, results };
@@ -799,4 +977,3 @@ export async function runBatchSteps(body: RunStepsBody) {
     }
   }
 }
-

@@ -182,12 +182,5 @@ async function verifyWithPlaywright() {
   console.log("All active browser checks passed! 🎉");
 }
 
-const action = process.argv[2];
-if (action === "verify-no-playwright") {
-  await verifyNoPlaywright();
-} else if (action === "verify-with-playwright") {
-  await verifyWithPlaywright();
-} else {
-  console.error("Unknown action:", action);
-  process.exit(1);
-}
+// Run verification directly
+await verifyWithPlaywright();

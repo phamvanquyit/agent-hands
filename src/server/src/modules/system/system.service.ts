@@ -134,6 +134,49 @@ export function invalidateVersionCache() {
 
 // ── System Info ────────────────────────────────────────────────────────────────
 
+/** Parse /proc/meminfo to get more accurate memory stats on Linux */
+function getLinuxMemory(): { total: number; free: number; used: number } | null {
+  try {
+    if (os.platform() !== "linux") return null;
+    const content = readFileSync("/proc/meminfo", "utf8");
+    const memInfo: Record<string, number> = {};
+    const lines = content.split("\n");
+    for (const line of lines) {
+      const match = line.match(/^(\w+):\s+(\d+)\s*kB/);
+      if (match) {
+        // Convert kB to bytes
+        memInfo[match[1]] = parseInt(match[2], 10) * 1024;
+      }
+    }
+
+    const total = memInfo["MemTotal"];
+    const available = memInfo["MemAvailable"];
+    if (total !== undefined && available !== undefined) {
+      return {
+        total,
+        free: available,
+        used: total - available,
+      };
+    }
+
+    // Fallback for older Linux kernels (< 3.14) without MemAvailable
+    const free = memInfo["MemFree"];
+    const buffers = memInfo["Buffers"] ?? 0;
+    const cached = memInfo["Cached"] ?? 0;
+    if (total !== undefined && free !== undefined) {
+      const actualFree = free + buffers + cached;
+      return {
+        total,
+        free: actualFree,
+        used: total - actualFree,
+      };
+    }
+  } catch {
+    // skip and fallback to os module
+  }
+  return null;
+}
+
 /** Sample CPU usage over a short interval (non-blocking) */
 async function getCpuUsage(): Promise<number> {
   const cpus1 = os.cpus();
@@ -193,9 +236,17 @@ async function getDiskInfo(): Promise<{ total: number; used: number; free: numbe
 /** Gather all system info */
 export async function getSystemInfo(): Promise<SystemInfoResponse> {
   const cpus = os.cpus();
-  const totalMem = os.totalmem();
-  const freeMem = os.freemem();
-  const usedMem = totalMem - freeMem;
+  let totalMem = os.totalmem();
+  let freeMem = os.freemem();
+  let usedMem = totalMem - freeMem;
+
+  const linuxMem = getLinuxMemory();
+  if (linuxMem) {
+    totalMem = linuxMem.total;
+    freeMem = linuxMem.free;
+    usedMem = linuxMem.used;
+  }
+
   const memUsage = process.memoryUsage();
 
   const [cpuUsage, disk] = await Promise.all([getCpuUsage(), getDiskInfo()]);
@@ -210,7 +261,7 @@ export async function getSystemInfo(): Promise<SystemInfoResponse> {
       total: totalMem,
       used: usedMem,
       free: freeMem,
-      usage: Math.round((usedMem / totalMem) * 100 * 10) / 10,
+      usage: totalMem > 0 ? Math.round((usedMem / totalMem) * 100 * 10) / 10 : 0,
     },
     disk,
     process: {

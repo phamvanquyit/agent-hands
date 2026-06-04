@@ -1,432 +1,511 @@
-# Agent Hands
-
-**Self-hosted infrastructure toolkit for LLM agents and AI applications.**
-
-Agent Hands provides all the building blocks LLM agents need to operate — state storage, structured data, file storage, tool execution, and dynamic APIs — packaged in a single server with a built-in Web UI.
-
-![License](https://img.shields.io/badge/license-MIT-blue)
-![Runtime](https://img.shields.io/badge/runtime-Bun-%23f472b6)
-![Version](https://img.shields.io/badge/version-0.2.7-green)
-
----
-
-## Why Agent Hands?
-
-When building LLM agents and AI pipelines, you typically need:
-
-- **State storage** — agents need to read/write key-value data across runs
-- **Structured data** — tables with custom columns, sort/filter like Notion databases
-- **File storage** — self-hosted object storage for documents, images, artifacts
-- **Agent tools** — system tools exposed via MCP protocol for AI clients
-- **Custom HTTP endpoints** — dynamic APIs written in JS/TS, created at runtime
-
-Instead of integrating multiple separate services (Redis, Notion, S3, custom tool server...), Agent Hands bundles everything into **a single self-hosted server**.
+<p align="center">
+  <h1 align="center">🤖 Agent Hands</h1>
+  <p align="center">
+    <strong>LLM-first knowledge base — Docs, DataTables, MCP server, S3-compatible file store.</strong>
+  </p>
+  <p align="center">
+    <a href="https://github.com/Zobite/agent-hands/releases"><img src="https://img.shields.io/badge/version-0.3.3-blue" alt="Version"></a>
+    <a href="https://github.com/Zobite/agent-hands/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
+    <img src="https://img.shields.io/badge/runtime-Bun-f9e1b3?logo=bun" alt="Bun">
+    <img src="https://img.shields.io/badge/database-SQLite-003B57?logo=sqlite" alt="SQLite">
+  </p>
+</p>
 
 ---
 
-## Features
+## What is Agent Hands?
 
-### ✅ Implemented
+Agent Hands is a self-hosted backend gateway designed to give AI coding agents (Claude Code, Cursor, Windsurf, etc.) persistent memory and real-world capabilities. It exposes everything through an **MCP server** and a **REST API**, so your AI agents can store data, browse the web, execute code, and manage files — all from a single service.
 
-| Module | Description | Status |
-|---|---|---|
-| 👤 **User Management** | Authentication, RBAC (superadmin/admin/user), session management, API keys | ✅ Done |
-| 🔑 **KV Store** | Flat key-value store with data types, TTL, prefix-based organization | ✅ Done |
-| 📊 **Dynamic Tables** | Notion-style databases with custom columns, sort/filter, row CRUD | ✅ Done |
+```mermaid
+graph LR
+  subgraph AI Clients
+    A1[Claude Code]
+    A2[Cursor / Windsurf]
+    A3[Custom Agent]
+  end
 
-| 📦 **Storage** | Self-hosted S3-compatible object storage: buckets, upload/download, presigned URLs, access keys | ✅ Done |
-| 🔌 **Built-in MCP Server** | System MCP server exposing KV Store, Tables, Storage as tools for AI agents | ✅ Done |
-| ⚡ **Dynamic API** | Create HTTP API endpoints at runtime using JS/TS code on Bun runtime | ✅ Done |
+  subgraph Agent Hands Gateway
+    MCP[MCP Server<br/>Streamable HTTP + stdio]
+    API[REST API<br/>:18080]
+    S3[S3-Compatible API<br/>/s3]
+    WEB[Web Dashboard<br/>React + Ant Design]
+  end
 
-### 🚧 In Progress / Planned
+  subgraph Core Services
+    KV[KV Store]
+    DT[DataTables]
+    OBJ[Object Storage]
+    BR[Browser Profiles]
+    DA[Dynamic APIs]
+    MT[MCP Tool Servers]
+    LLM[LLM Providers]
+  end
 
-| Module | Description | Status |
-|---|---|---|
-| 🔌 **Custom MCP Servers** | User-defined MCP servers with custom Python tools in sandbox | ⬜ Planned |
-| 📊 **Table Views** | Multiple views (Table/Board/List) for Dynamic Tables | ⬜ Planned |
-| 📊 **Row Detail Dialog** | Detailed row view in Dynamic Tables | ⬜ Planned |
+  subgraph Storage
+    DB[(SQLite)]
+    FS[Local Filesystem]
+  end
+
+  A1 & A2 & A3 -->|MCP / HTTP| MCP
+  A1 & A2 & A3 -->|REST| API
+  A1 & A2 & A3 -->|S3 Protocol| S3
+  MCP --> KV & DT & OBJ & BR & DA
+  API --> KV & DT & OBJ & BR & DA & MT & LLM
+  KV & DT & MT & LLM --> DB
+  OBJ --> DB & FS
+  BR --> FS
+```
 
 ---
 
 ## Quick Start
 
-### Prerequisites
-
-[Bun](https://bun.sh/) runtime ≥ 1.2.
-
-```bash
-curl -fsSL https://bun.sh/install | bash
-```
-
-### Installation
+### Install (one-liner)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Zobite/agent-hands/main/install.sh | bash
 ```
 
-Or install a specific version:
+> **Prerequisite:** [Bun](https://bun.sh) runtime must be installed first.
+
+The installer downloads the latest release, builds the server, installs Playwright/Chromium for browser automation, and starts the daemon on port `18080`.
+
+### Default Credentials
+
+| Field    | Value      |
+| -------- | ---------- |
+| Username | `admin`    |
+| Password | `admin123` |
+
+> ⚠️ **Change your password** after first login via the Web UI or `POST /api/auth/change-password`.
+
+### CLI Reference
 
 ```bash
-VERSION=0.2.7 curl -fsSL https://raw.githubusercontent.com/Zobite/agent-hands/main/install.sh | bash
+agent-hands start                    # Start server (daemon mode)
+agent-hands start --port 8080        # Custom port
+agent-hands start --host 0.0.0.0     # Listen on all interfaces
+agent-hands start --foreground       # Run in foreground
+agent-hands stop                     # Stop the daemon
+agent-hands restart                  # Restart
+agent-hands status                   # Check if running
+agent-hands logs                     # Show last 50 lines
+agent-hands logs --follow            # Tail logs continuously
+agent-hands logs --lines 100         # Show last N lines
+agent-hands version                  # Print version
+agent-hands init                     # Create super admin (first run)
+agent-hands mcp                      # Start MCP server (stdio mode)
 ```
 
-### Launch
+**Environment variables:**
 
-```bash
-# Start the server (background daemon)
-agent-hands start
-
-# Open the Web UI
-open http://localhost:18080
-```
-
-The Web UI is pre-bundled and served automatically — no additional setup required.
-
-### Uninstall
-
-```bash
-rm -rf ~/.local/share/agent-hands
-sudo rm /usr/local/bin/agent-hands
-```
+| Variable   | Default              | Description              |
+| ---------- | -------------------- | ------------------------ |
+| `PORT`     | `18080`              | HTTP server port         |
+| `HOST`     | `127.0.0.1`          | Bind address             |
+| `DATA_DIR` | `~/.agent-hands`     | Data directory           |
 
 ---
 
-## CLI Reference
+## Features
 
-```
-agent-hands <command> [options]
-```
+### 🔑 KV Store
 
-### Commands
+A flat key-value store with typed values, optional TTL, and upsert semantics. Keys are globally unique — use prefixes for namespace organization.
 
-| Command     | Description                         |
-|-------------|-------------------------------------|
-| `start`     | Start the server (daemon mode)      |
-| `stop`      | Stop the running server             |
-| `restart`   | Restart the server                  |
-| `status`    | Check server status                 |
-| `logs`      | View server logs                    |
-| `version`   | Print version                       |
-| `help`      | Show help                           |
-
-### Options
-
-**`start` / `restart`:**
-
-| Flag                  | Default               | Description          |
-|-----------------------|-----------------------|----------------------|
-| `--port <number>`     | `18080`               | Server port          |
-| `--host <string>`     | `127.0.0.1`           | Server host          |
-| `--data-dir <path>`   | `~/.agent-hands` | Data directory       |
-| `-f, --foreground`    | —                     | Run in foreground    |
-
-**`logs`:**
-
-| Flag                | Default | Description                     |
-|---------------------|---------|---------------------------------|
-| `--lines <number>`  | `50`    | Number of log lines to display |
-| `--follow`          | —       | Tail logs continuously         |
-
-### Examples
-
-```bash
-# Start with a custom port
-agent-hands start --port 8080
-
-# Expose on the local network
-agent-hands start --host 0.0.0.0
-
-# Run in foreground for debugging
-agent-hands start --foreground
-
-# View live logs
-agent-hands logs --follow
-
-# Check status
-agent-hands status
-
-# Stop the server
-agent-hands stop
-```
-
----
-
-## First Login
-
-On first startup when no accounts exist, the server automatically creates a default super admin account:
-
-| Field    | Value             |
-|----------|-------------------|
-| Username | `admin`           |
-| Email    | `admin@local.com` |
-| Password | `admin123`        |
-
-> [!WARNING]
-> **Change the password immediately after the first login!** The default account has super admin privileges.
-
----
-
-## Data Storage
-
-All data is stored in the data directory (`~/.agent-hands` by default):
-
-```
-~/.agent-hands/
-├── data.db       # SQLite database (users, variables, tables, documents, configs...)
-├── agent.pid     # PID file (daemon mode)
-├── agent.log     # Server logs (daemon mode)
-└── storage/      # Object storage files (buckets & objects)
-```
-
----
-
-## REST API
-
-The server exposes a REST API at `http://localhost:18080/api`. Full interactive API documentation is available at:
-
-```
-http://localhost:18080/docs
-```
-
-### Authentication
-
-All API endpoints require authentication via one of two methods:
-
-**Bearer Token** (session-based):
-```http
-Authorization: Bearer <token>
-```
-
-**API Key** (recommended for agents):
-```http
-X-API-Key: ltk_xxxxxxxxxxxx
-```
-
-### API Endpoint Groups
-
-| Prefix | Description |
-|---|---|
-| `POST /api/auth/login` | Authenticate, get JWT token |
-| `/api/users` | User management (admin+) |
-| `/api/api-keys` | API Key management (admin+) |
-| `/api/kv-store` | KV Store entries CRUD (flat, globally unique keys) |
-| `/api/databases` | Database containers CRUD |
-| `/api/databases/:dbId/tables` | Tables, columns, rows CRUD |
-
-| `/api/storage/buckets` | Bucket management |
-| `/api/storage/buckets/:name/objects` | Object upload/download/delete |
-| `/api/storage/buckets/:name/presigned` | Generate presigned URLs |
-| `/api/mcp/:serverId` | MCP server endpoint (Streamable HTTP) |
-| `/api/dynamic-apis` | Dynamic API endpoint management |
-| `/apis/*` | Dynamic API request routing |
-| `/s3/` | S3-compatible API (AWS SDK compatible) |
-
-> See detailed request/response schemas at `/docs` while the server is running.
-
----
-
-## Integration with LLM Agents
-
-### 🔑 KV Store — Agent State Storage
-
-Agents can persist and read state via the KV Store API. Keys are **globally unique** — use prefixes for organization (e.g. `session.123.step`, `config.api_url`).
-
-```javascript
-// Write a key-value entry (with optional TTL)
-await fetch('http://localhost:18080/api/kv-store', {
-  method: 'POST',
-  headers: { 'X-API-Key': 'ltk_your-key', 'Content-Type': 'application/json' },
+```js
+// Set a key
+await fetch("http://localhost:18080/api/kv-store", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer ltk_your_api_key"
+  },
   body: JSON.stringify({
-    key: 'session.123.current_step',
-    value: '3',
-    type: 'string',
-    ttl: 3600  // auto-delete after 1 hour
+    key: "user:preferences",
+    value: '{"theme":"dark"}',
+    type: "json",
+    ttl: 3600  // expires in 1 hour (optional)
   })
 });
 
-// Read a variable by key
-const variable = await fetch(
-  'http://localhost:18080/api/kv-store/by-key/session.123.current_step',
-  { headers: { 'X-API-Key': 'ltk_your-key' } }
-).then(r => r.json());
+// Get by key
+const res = await fetch("http://localhost:18080/api/kv-store/by-key/user:preferences", {
+  headers: { "Authorization": "Bearer ltk_your_api_key" }
+});
 ```
 
-### 🔌 Built-in MCP Server — Tools for AI Agents
+**MCP Tools:** `kv_list`, `kv_get`, `kv_set`, `kv_delete`
 
-The built-in MCP server exposes the entire system to AI agents via 3 meta-tools:
+---
 
-| Tool | Description |
-|---|---|
-| `get_overview` | List all available actions across all modules |
-| `get_docs` | Get detailed documentation for a specific action |
-| `execute` | Execute any action with a payload |
+### 📊 DataTables
 
-**Available actions:**
+Notion-like structured data tables organized by projects. Supports dynamic columns, row CRUD, bulk operations, and MQL (Mini Query Language) for querying.
 
-- **KV Store**: `kv.list`, `kv.get`, `kv.set`, `kv.delete`
-- **Databases & Tables**: `databases.list`, `tables.list`, `tables.query`, `tables.insert`, `tables.update`, `tables.delete`
+```mermaid
+graph TD
+  P[Project] --> T1[Table A]
+  P --> T2[Table B]
+  T1 --> C1[Columns: name, email, age]
+  T1 --> R1[Row 1]
+  T1 --> R2[Row 2]
+  T2 --> C2[Columns: product, price]
+  T2 --> R3[Row 1]
+```
 
-- **Storage**: `storage.list_buckets`, `storage.list_objects`, `storage.get_object_info`, `storage.get_download_url`, `storage.delete_object`
+```js
+// Create a project
+const project = await fetch("http://localhost:18080/api/datatables", {
+  method: "POST",
+  headers: { "Content-Type": "application/json", "Authorization": "Bearer ltk_..." },
+  body: JSON.stringify({ name: "CRM", description: "Customer data" })
+}).then(r => r.json());
 
-**Connect your AI client** to:
+// Create a table
+await fetch(`http://localhost:18080/api/datatables/${project.id}/tables`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json", "Authorization": "Bearer ltk_..." },
+  body: JSON.stringify({
+    name: "Contacts",
+    columns: [
+      { name: "name", type: "text" },
+      { name: "email", type: "text" },
+      { name: "score", type: "number" }
+    ]
+  })
+});
+```
+
+**MCP Tools:** `datatables_list_projects`, `datatables_create_project`, `datatables_list_tables`, `datatables_create_table`, `datatables_update_table`, `datatables_query_rows`, `datatables_insert_row`, `datatables_update_row`, `datatables_delete_row`
+
+---
+
+### 📦 Object Storage
+
+Self-hosted S3-compatible object storage with buckets, file upload/download, presigned URLs, public file serving, and access keys for S3 API authentication.
+
+```js
+// Create a bucket
+await fetch("http://localhost:18080/api/storage/buckets", {
+  method: "POST",
+  headers: { "Content-Type": "application/json", "Authorization": "Bearer ltk_..." },
+  body: JSON.stringify({ name: "assets", isPublic: true })
+});
+
+// Upload a file (multipart)
+const form = new FormData();
+form.append("file", new Blob(["hello world"]), "readme.txt");
+await fetch("http://localhost:18080/api/storage/buckets/assets/upload?key=docs/readme.txt", {
+  method: "POST",
+  headers: { "Authorization": "Bearer ltk_..." },
+  body: form
+});
+
+// Download
+const file = await fetch("http://localhost:18080/api/storage/buckets/assets/objects/docs/readme.txt", {
+  headers: { "Authorization": "Bearer ltk_..." }
+});
+```
+
+**S3 API:** Fully S3-compatible endpoint at `/s3` — use any S3 SDK with `endpoint: "http://localhost:18080/s3"`.
+
+**MCP Tools:** `storage_list_buckets`, `storage_list_objects`, `storage_get_object_info`, `storage_get_download_url`, `storage_upload_object`, `storage_delete_object`
+
+---
+
+### 🌐 Browser Profiles
+
+Multi-session stealth browser profiles powered by Playwright and CloakBrowser. Create isolated browser instances with custom fingerprints, proxies, and persistent sessions. Control them programmatically via batch step execution.
+
+```mermaid
+sequenceDiagram
+  participant Agent as AI Agent
+  participant API as Agent Hands
+  participant Browser as Chromium
+
+  Agent->>API: POST /api/browsers (create profile)
+  Agent->>API: POST /api/browsers/:id/start
+  API->>Browser: Launch Chromium (with fingerprint + proxy)
+  Agent->>API: POST /api/browsers/:id/control
+  Note right of API: Execute steps: navigate, click,<br/>type, screenshot, extract
+  API->>Browser: Run automation steps
+  Browser-->>API: Step results + screenshots
+  API-->>Agent: { steps: [...], screenshot: "url" }
+  Agent->>API: POST /api/browsers/:id/stop
+  API->>Browser: Close browser
+```
+
+```js
+// Create a browser profile
+const profile = await fetch("http://localhost:18080/api/browsers", {
+  method: "POST",
+  headers: { "Content-Type": "application/json", "Authorization": "Bearer ltk_..." },
+  body: JSON.stringify({
+    name: "research-browser",
+    description: "For web research tasks"
+  })
+}).then(r => r.json());
+
+// Start the browser
+await fetch(`http://localhost:18080/api/browsers/${profile.id}/start`, {
+  method: "POST",
+  headers: { "Authorization": "Bearer ltk_..." }
+});
+
+// Run automation steps
+await fetch(`http://localhost:18080/api/browsers/${profile.id}/control`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json", "Authorization": "Bearer ltk_..." },
+  body: JSON.stringify({
+    steps: [
+      { action: "navigate", url: "https://example.com" },
+      { action: "screenshot" }
+    ]
+  })
+});
+```
+
+**MCP Tools:** `browser_list`, `browser_create`, `browser_start`, `browser_stop`, `browser_delete`, `browser_list_tabs`, `browser_run_steps`, `browser_quick_run`
+
+---
+
+### ⚡ Dynamic APIs
+
+Cloudflare Worker-like serverless API runtime. Write JavaScript/TypeScript handler functions, and Agent Hands executes them on the fly. Supports dual execution modes: **fast** (in-process) for simple scripts and **isolated** (subprocess sandbox) for code with npm imports. Includes an AI Coding Agent that can generate and iterate on code via SSE streaming.
+
+```mermaid
+graph LR
+  REQ[Incoming Request] --> ROUTER{Route Matcher}
+  ROUTER -->|Simple Code| FAST[Fast Mode<br/>In-process eval]
+  ROUTER -->|Has npm imports| ISO[Isolated Mode<br/>Subprocess sandbox]
+  FAST --> RES[Response]
+  ISO --> RES
+```
+
+```js
+// Create a dynamic API endpoint
+await fetch("http://localhost:18080/api/dynamic-apis", {
+  method: "POST",
+  headers: { "Content-Type": "application/json", "Authorization": "Bearer ltk_..." },
+  body: JSON.stringify({
+    name: "Hello World",
+    method: "GET",
+    path: "/hello/:name",
+    code: `function handler(req, ctx) {
+      return {
+        status: 200,
+        body: { message: "Hello " + req.params.name + "!" }
+      };
+    }`
+  })
+});
+
+// Call your dynamic endpoint
+const res = await fetch("http://localhost:18080/x/hello/world");
+```
+
+**MCP Tools:** `dynamic_api_list`, `dynamic_api_get`, `dynamic_api_create`, `dynamic_api_update`, `dynamic_api_delete`
+
+---
+
+### 🔌 MCP Tool Servers
+
+Manage multiple MCP servers and custom tools. The built-in "System Tools" server exposes all core features (KV, DataTables, Storage, Browser, Dynamic APIs) as MCP tools. Create additional custom servers with JavaScript tool implementations that run in a sandboxed environment.
+
+Each custom tool:
+- Has a **name**, **description**, **JSON Schema** for input validation, and **JavaScript code**
+- Supports a **draft code** workflow — AI generates code, you review before promoting to production
+- Logs every execution with input/output for debugging
+- Includes an **AI Coding Agent** that can write and iterate on tool code
+
+---
+
+### 🤖 LLM Providers
+
+Manage LLM provider configurations. Supports OpenRouter, OpenAI, Google Gemini, Anthropic, Ollama, and custom OpenAI-compatible endpoints. Auto-fetches available models from each provider.
+
+```js
+// Add an OpenAI provider
+await fetch("http://localhost:18080/api/llm-providers", {
+  method: "POST",
+  headers: { "Content-Type": "application/json", "Authorization": "Bearer ltk_..." },
+  body: JSON.stringify({
+    name: "OpenAI",
+    providerType: "openai",
+    apiKey: "sk-..."
+  })
+});
+```
+
+---
+
+## MCP Client Configuration
+
+Connect your AI coding agent to Agent Hands via the MCP protocol. The endpoint format is:
 
 ```
 http://localhost:18080/api/mcp/<server-id>
 ```
 
-**Configuration examples:**
+The built-in server ID is `system-tools`. You can find custom server IDs in the Web Dashboard.
 
 <details>
-<summary>Claude Code</summary>
-
-```json
-{
-  "mcpServers": {
-    "agent-hands": {
-      "type": "streamableHttp",
-      "url": "http://localhost:18080/api/mcp/<server-id>",
-      "headers": {
-        "Authorization": "Bearer ltk_your-api-key"
-      }
-    }
-  }
-}
-```
-</details>
-
-<details>
-<summary>Cursor</summary>
-
-```json
-{
-  "mcpServers": {
-    "agent-hands": {
-      "url": "http://localhost:18080/api/mcp/<server-id>",
-      "headers": {
-        "Authorization": "Bearer ltk_your-api-key"
-      }
-    }
-  }
-}
-```
-</details>
-
-### ⚡ Dynamic API — Custom HTTP Endpoints
-
-Create HTTP endpoints at runtime using JavaScript/TypeScript. Code runs on Bun runtime with Cloudflare Workers-inspired architecture:
-
-- **Warm instances** — handlers cached in memory, ~1-5ms cold start
-- **Bindings** — access internal services (Variables, Tables, Docs, Files) via injected `context`
-- **Console capture** — all `console.log/error` captured and stored as logs
-- **npm dependencies** — endpoints can use external npm packages (isolated mode, ~20-50ms cold start)
-
-Dynamic API endpoints are accessible at `/apis/*`:
-
-```
-POST http://localhost:18080/apis/my-endpoint
-```
-
-### 📦 Storage — S3-Compatible Object Storage
-
-Use the REST API or any S3-compatible client/SDK:
+<summary><strong>Claude Code</strong></summary>
 
 ```bash
-# Using AWS CLI with Agent Hands Storage
-aws s3 ls --endpoint-url http://localhost:18080/s3 \
-  --region us-east-1
+claude mcp add agent-hands \
+  --transport http \
+  http://localhost:18080/api/mcp/system-tools \
+  --header "Authorization: Bearer ltk_your_api_key"
+```
+</details>
+
+<details>
+<summary><strong>Cursor</strong></summary>
+
+Add to `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "agent-hands": {
+      "url": "http://localhost:18080/api/mcp/system-tools",
+      "headers": {
+        "Authorization": "Bearer ltk_your_api_key"
+      }
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary><strong>Windsurf</strong></summary>
+
+Add to `~/.codeium/windsurf/mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "agent-hands": {
+      "serverUrl": "http://localhost:18080/api/mcp/system-tools",
+      "headers": {
+        "Authorization": "Bearer ltk_your_api_key"
+      }
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary><strong>stdio mode (any MCP client)</strong></summary>
+
+```bash
+agent-hands mcp
 ```
 
-Features: buckets, upload/download, public URLs, presigned URLs (time-limited), access key management.
+This starts a stdio-based MCP server for clients that support the stdio transport.
+</details>
+
+---
+
+## API Overview
+
+All endpoints require authentication via `Authorization: Bearer <jwt>` or `Authorization: Bearer <api_key>` (prefix `ltk_`) or `X-API-Key: <api_key>`.
+
+| Prefix                        | Module           | Description                              |
+| ----------------------------- | ---------------- | ---------------------------------------- |
+| `POST /api/auth/login`        | Auth             | Login, refresh, change password, get me   |
+| `/api/users`                  | Users            | CRUD users, admin reset password          |
+| `/api/api-keys`               | API Keys         | Create / list / revoke API keys           |
+| `/api/kv-store`               | KV Store         | Get / set / delete / bulk / flush keys    |
+| `/api/datatables`             | DataTables       | Projects, tables, columns, rows, MQL      |
+| `/api/storage`                | Object Storage   | Buckets, objects, upload, presign, access keys |
+| `/api/browsers`               | Browser Profiles | CRUD profiles, start/stop, control, screenshot |
+| `/api/dynamic-apis`           | Dynamic APIs     | CRUD endpoints, test/dry-run, logs, coding agent |
+| `/api/mcp-tool-servers`       | MCP Servers      | CRUD servers & tools, test, logs, coding agent |
+| `/api/llm-providers`          | LLM Providers    | CRUD providers, refresh models            |
+| `/api/configurations`         | Configurations   | Get / set / delete config key-values      |
+| `/api/system`                 | System           | Version info, system metrics, self-update |
+| `/api/docs`                   | API Docs         | Auto-generated API documentation          |
+| `/api/mcp/:serverId`          | MCP Protocol     | Streamable HTTP MCP endpoint              |
+| `/s3`                         | S3 API           | S3-compatible endpoint (AWS Sig V4 auth)  |
+| `/public/*`                   | Public Files     | Serve public objects (no auth required)   |
 
 ---
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| **Runtime** | [Bun](https://bun.sh/) ≥ 1.2 |
-| **Server** | [Fastify](https://fastify.dev/) + fastify-type-provider-zod |
-| **Database** | SQLite (`bun:sqlite`) + [Drizzle ORM](https://orm.drizzle.team/) |
-| **Validation** | [Zod](https://zod.dev/) |
-| **MCP** | [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/typescript-sdk) |
-| **Frontend** | React 19 + TypeScript + [Vite](https://vite.dev/) |
-| **UI Components** | [Ant Design](https://ant.design/) v6 + [Tailwind CSS](https://tailwindcss.com/) v4 |
-| **Data Grid** | [AG Grid](https://www.ag-grid.com/) |
-| **Code Editor** | [Monaco Editor](https://microsoft.github.io/monaco-editor/) |
-| **State Management** | [Zustand](https://zustand.docs.pmnd.rs/) |
+| Component       | Technology                                                    |
+| --------------- | ------------------------------------------------------------- |
+| **Runtime**     | [Bun](https://bun.sh)                                        |
+| **Server**      | [Fastify](https://fastify.io) v5                              |
+| **Database**    | SQLite via [Drizzle ORM](https://orm.drizzle.team)            |
+| **MCP SDK**     | [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/typescript-sdk) |
+| **Browser**     | [Playwright](https://playwright.dev) + [CloakBrowser](https://www.npmjs.com/package/cloakbrowser) |
+| **AI SDKs**     | [Vercel AI SDK](https://sdk.vercel.ai), [LangChain](https://js.langchain.com) |
+| **Frontend**    | [React](https://react.dev) 19 + [Vite](https://vitejs.dev) 8 |
+| **UI Library**  | [Ant Design](https://ant.design) 6 + [Tailwind CSS](https://tailwindcss.com) 4 |
+| **Data Grid**   | [AG Grid](https://www.ag-grid.com)                            |
+| **Code Editor** | [Monaco Editor](https://microsoft.github.io/monaco-editor/)  |
+| **State**       | [Zustand](https://zustand-demo.pmnd.rs)                      |
 
 ---
 
 ## Development
 
 ```bash
-# Clone the repo
+# Clone
 git clone https://github.com/Zobite/agent-hands.git
 cd agent-hands
 
 # Install dependencies
 bun install
 
-# Start dev servers (API + Vite HMR running in parallel)
+# Start dev server (server + web concurrently)
 bun run dev
 
-# Type check
+# Server only
+bun run dev:server
+
+# Web only
+bun run dev:web
+
+# Type checking
 bun run typecheck:server
 bun run typecheck:web
 
-# Lint & format
-bun run biome:check
+# Lint & format (web)
+bun run lint
+bun run lint:fix
+bun run format
+
+# Build for production
+bun run build
+
+# Run server tests
+cd src/server && bun test src/
 ```
 
-### Project Structure
+## Data Storage
+
+All data is stored in `~/.agent-hands/` by default (configurable via `--data-dir` or `DATA_DIR`):
 
 ```
-agent-hands/
-├── src/
-│   ├── server/                    # Fastify API server
-│   │   └── src/
-│   │       ├── modules/           # Feature modules (auto-loaded)
-│   │       │   ├── auth/          # Authentication (login/logout)
-│   │       │   ├── users/         # User management
-│   │       │   ├── api-keys/      # API key management
-│   │       │   ├── variables/     # Dynamic variables + namespaces
-│   │       │   ├── databases/     # Dynamic tables (databases/tables/columns/rows)
-│   │       │   ├── documents/     # Documents & projects
-│   │       │   ├── storage/       # Object storage (buckets/objects)
-│   │       │   ├── s3/            # S3-compatible API layer
-│   │       │   ├── mcp-tool-servers/ # MCP server management
-│   │       │   ├── dynamic-apis/  # Dynamic API endpoints
-│   │       │   ├── system/        # System info
-│   │       │   └── api-docs/      # API documentation endpoint
-│   │       └── common/            # Shared infrastructure
-│   │           ├── db/            # Drizzle ORM schema & migrations
-│   │           ├── auth/          # Auth middleware (JWT + API key)
-│   │           ├── mcp/           # MCP protocol + action registry
-│   │           └── utils/         # Utility functions
-│   └── web/                       # React frontend (Vite)
-│       └── src/
-│           └── modules/           # Feature modules (mirror of server)
-├── bin/                           # CLI entry point
-├── docs/                          # Feature documentation & specs
-└── public/                        # Bundled web assets (production)
+~/.agent-hands/
+├── agent-hands.db          # SQLite database (all metadata)
+├── storage/                # Object storage files (organized by bucket)
+├── browsers/               # Browser profile data directories
+├── screenshots/            # Captured browser screenshots
+├── server.pid              # Daemon PID file
+└── server.log              # Server log output
 ```
-
-### Adding a New Module
-
-Each feature is an independent module. Create a directory in `src/server/src/modules/<name>/` with 4 files:
-
-```
-src/server/src/modules/my-feature/
-├── my-feature.module.ts      # Fastify plugin + MODULE_PREFIX export
-├── my-feature.controller.ts  # Route handlers (thin layer)
-├── my-feature.service.ts     # Business logic + Drizzle queries
-└── my-feature.schema.ts      # Zod schemas
-```
-
-Modules are auto-loaded — no need to modify `app.ts`.
 
 ---
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) © [Zobite](https://github.com/Zobite)

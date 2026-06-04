@@ -1,86 +1,96 @@
 /**
- * Register 3 meta-tools on the MCP server:
- *   1. list_actions      — Summary of all available actions
- *   2. get_action_docs   — Detailed docs for a specific action
- *   3. execute           — Validate payload and run an action
+ * Register all built-in system tools on the MCP server.
  *
- * All individual tools are replaced by this dispatch-based architecture,
- * reducing LLM context usage while keeping full functionality.
+ * Each tool is defined in its own file under ./tools/<category>/.
+ * This file simply imports and calls each registration function.
  */
 
-import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import {
-  registerActions,
-  generateOverview,
-  generateActionDocs,
-  executeAction,
-} from "./registry.js";
-import { kvStoreActions } from "./actions/kv-store.js";
-import { datatableProjectActions, tableActions } from "./actions/table.js";
-import { storageActions } from "./actions/storage.js";
-import { browserProfileActions } from "./actions/browser.js";
 
-// ── Bootstrap all actions into the registry ────────────────────────────────────
+// ── KV Store ───────────────────────────────────────────────────────────────────
+import { registerKvList } from "./tools/kv/kv-list.js";
+import { registerKvGet } from "./tools/kv/kv-get.js";
+import { registerKvSet } from "./tools/kv/kv-set.js";
+import { registerKvDelete } from "./tools/kv/kv-delete.js";
 
-registerActions([
-  ...kvStoreActions,
-  ...datatableProjectActions,
-  ...tableActions,
-  ...storageActions,
-  ...browserProfileActions,
-]);
+// ── DataTables ─────────────────────────────────────────────────────────────────
+import { registerDatatablesListProjects } from "./tools/datatables/datatables-list-projects.js";
+import { registerDatatablesCreateProject } from "./tools/datatables/datatables-create-project.js";
+import { registerDatatablesListTables } from "./tools/datatables/datatables-list-tables.js";
+import { registerDatatablesCreateTable } from "./tools/datatables/datatables-create-table.js";
+import { registerDatatablesUpdateTable } from "./tools/datatables/datatables-update-table.js";
+import { registerDatatablesQueryRows } from "./tools/datatables/datatables-query-rows.js";
+import { registerDatatablesInsertRow } from "./tools/datatables/datatables-insert-row.js";
+import { registerDatatablesUpdateRow } from "./tools/datatables/datatables-update-row.js";
+import { registerDatatablesDeleteRow } from "./tools/datatables/datatables-delete-row.js";
 
-// ── Register MCP Tools ─────────────────────────────────────────────────────────
+// ── Object Storage ─────────────────────────────────────────────────────────────
+import { registerStorageListBuckets } from "./tools/storage/storage-list-buckets.js";
+import { registerStorageListObjects } from "./tools/storage/storage-list-objects.js";
+import { registerStorageGetObjectInfo } from "./tools/storage/storage-get-object-info.js";
+import { registerStorageGetDownloadUrl } from "./tools/storage/storage-get-download-url.js";
+import { registerStorageUploadObject } from "./tools/storage/storage-upload-object.js";
+import { registerStorageDeleteObject } from "./tools/storage/storage-delete-object.js";
+
+// ── Browser Profiles ───────────────────────────────────────────────────────────
+import { registerBrowserList } from "./tools/browser/browser-list.js";
+import { registerBrowserCreate } from "./tools/browser/browser-create.js";
+import { registerBrowserStart } from "./tools/browser/browser-start.js";
+import { registerBrowserStop } from "./tools/browser/browser-stop.js";
+import { registerBrowserDelete } from "./tools/browser/browser-delete.js";
+import { registerBrowserListTabs } from "./tools/browser/browser-list-tabs.js";
+import { registerBrowserRunSteps } from "./tools/browser/browser-run-steps.js";
+import { registerBrowserQuickRun } from "./tools/browser/browser-quick-run.js";
+
+// ── Dynamic APIs ─────────────────────────────────────────────────────────────
+import { registerDynamicApiList } from "./tools/dynamic-apis/dynamic-api-list.js";
+import { registerDynamicApiGet } from "./tools/dynamic-apis/dynamic-api-get.js";
+import { registerDynamicApiCreate } from "./tools/dynamic-apis/dynamic-api-create.js";
+import { registerDynamicApiUpdate } from "./tools/dynamic-apis/dynamic-api-update.js";
+import { registerDynamicApiDelete } from "./tools/dynamic-apis/dynamic-api-delete.js";
+
+// ── Register All ───────────────────────────────────────────────────────────────
 
 export function registerAllSystemTools(server: McpServer) {
-  server.tool(
-    "list_actions",
-    "List all available actions in Agent Hands with descriptions",
-    {},
-    async () => ({
-      content: [{ type: "text" as const, text: generateOverview() }],
-    }),
-  );
+  // KV Store
+  registerKvList(server);
+  registerKvGet(server);
+  registerKvSet(server);
+  registerKvDelete(server);
 
-  // @ts-expect-error — TS2589: MCP SDK generic type depth issue with Zod
-  server.tool(
-    "get_action_docs",
-    "Get detailed documentation (params, types, examples) for a specific action",
-    { action: z.string().describe("Action name, e.g. 'kv.set'") },
-    async ({ action }) => {
-      const docs = generateActionDocs(action);
-      if (!docs) {
-        return {
-          content: [{ type: "text" as const, text: JSON.stringify({ error: `Unknown action "${action}". Call list_actions() to see available actions.` }) }],
-          isError: true,
-        };
-      }
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(docs, null, 2) }],
-      };
-    },
-  );
+  // DataTables
+  registerDatatablesListProjects(server);
+  registerDatatablesCreateProject(server);
+  registerDatatablesListTables(server);
+  registerDatatablesCreateTable(server);
+  registerDatatablesUpdateTable(server);
+  registerDatatablesQueryRows(server);
+  registerDatatablesInsertRow(server);
+  registerDatatablesUpdateRow(server);
+  registerDatatablesDeleteRow(server);
 
-  server.tool(
-    "execute",
-    "Execute a system action. Call get_action_docs(action) first to see required params.",
-    {
-      action: z.string().describe("Action name, e.g. 'kv.set'"),
-      payload: z.any().optional().default({}).describe("Action payload — see get_action_docs for params"),
-    },
-    async ({ action, payload }) => {
-      const p = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
-      const result = await executeAction(action, p);
-      if (!result.success) {
-        return {
-          content: [{ type: "text" as const, text: JSON.stringify({ error: result.error }) }],
-          isError: true,
-        };
-      }
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(result.data, null, 2) }],
-      };
-    },
-  );
+  // Object Storage
+  registerStorageListBuckets(server);
+  registerStorageListObjects(server);
+  registerStorageGetObjectInfo(server);
+  registerStorageGetDownloadUrl(server);
+  registerStorageUploadObject(server);
+  registerStorageDeleteObject(server);
+
+  // Browser Profiles
+  registerBrowserList(server);
+  registerBrowserCreate(server);
+  registerBrowserStart(server);
+  registerBrowserStop(server);
+  registerBrowserDelete(server);
+  registerBrowserListTabs(server);
+  registerBrowserRunSteps(server);
+  registerBrowserQuickRun(server);
+
+  // Dynamic APIs
+  registerDynamicApiList(server);
+  registerDynamicApiGet(server);
+  registerDynamicApiCreate(server);
+  registerDynamicApiUpdate(server);
+  registerDynamicApiDelete(server);
 }
