@@ -2,39 +2,35 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import cors from "@fastify/cors";
+import multipart from "@fastify/multipart";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import Fastify from "fastify";
+import type { FastifyError, FastifyInstance } from "fastify";
+import { type ZodTypeProvider, serializerCompiler, validatorCompiler } from "fastify-type-provider-zod";
+import { z } from "zod";
+import { requireAuth } from "./common/auth/middleware.js";
+import { createMcpServer } from "./common/mcp/server.js";
 // ── Static module imports (required for bun build bundling) ─────────────────
 import apiDocsModule, { MODULE_PREFIX as API_DOCS_PREFIX } from "./modules/api-docs/api-doc.module.js";
 import apiKeysModule, { MODULE_PREFIX as API_KEYS_PREFIX } from "./modules/api-keys/api-key.module.js";
 import authModule, { MODULE_PREFIX as AUTH_PREFIX } from "./modules/auth/auth.module.js";
+import browsersModule, { MODULE_PREFIX as BROWSERS_PREFIX } from "./modules/browsers/browser.module.js";
+import configurationsModule, { MODULE_PREFIX as CONFIGURATIONS_PREFIX } from "./modules/configurations/configuration.module.js";
 import datatablesModule, { MODULE_PREFIX as DATATABLES_PREFIX } from "./modules/datatables/datatable.module.js";
+import dynamicApisModule, { MODULE_PREFIX as DYNAMIC_APIS_PREFIX } from "./modules/dynamic-apis/dynamic-api.module.js";
+import { registerDynamicApiRunner } from "./modules/dynamic-apis/dynamic-api.runner.js";
+import kvStoreModule, { MODULE_PREFIX as KV_STORE_PREFIX } from "./modules/kv-store/kv-store.module.js";
+import llmProvidersModule, { MODULE_PREFIX as LLM_PROVIDERS_PREFIX } from "./modules/llm-providers/llm-provider.module.js";
+import { executeMcpTool } from "./modules/mcp-tool-servers/mcp-tool-executor.js";
 import mcpToolServersModule, { MODULE_PREFIX as MCP_TOOL_SERVERS_PREFIX } from "./modules/mcp-tool-servers/mcp-tool-server.module.js";
+import { getMcpServerById, listMcpTools } from "./modules/mcp-tool-servers/mcp-tool-server.service.js";
+import { createMcpToolLog } from "./modules/mcp-tool-servers/mcp-tool-server.service.js";
 import s3Module, { MODULE_PREFIX as S3_PREFIX } from "./modules/s3/s3.module.js";
 import storageModule, { MODULE_PREFIX as STORAGE_PREFIX } from "./modules/storage/storage.module.js";
-import usersModule, { MODULE_PREFIX as USERS_PREFIX } from "./modules/users/user.module.js";
-import kvStoreModule, { MODULE_PREFIX as KV_STORE_PREFIX } from "./modules/kv-store/kv-store.module.js";
 import systemModule, { MODULE_PREFIX as SYSTEM_PREFIX } from "./modules/system/system.module.js";
-import dynamicApisModule, { MODULE_PREFIX as DYNAMIC_APIS_PREFIX } from "./modules/dynamic-apis/dynamic-api.module.js";
-import llmProvidersModule, { MODULE_PREFIX as LLM_PROVIDERS_PREFIX } from "./modules/llm-providers/llm-provider.module.js";
-import configurationsModule, { MODULE_PREFIX as CONFIGURATIONS_PREFIX } from "./modules/configurations/configuration.module.js";
-import browsersModule, { MODULE_PREFIX as BROWSERS_PREFIX } from "./modules/browsers/browser.module.js";
-import { registerDynamicApiRunner } from "./modules/dynamic-apis/dynamic-api.runner.js";
-import Fastify from "fastify";
-import type { FastifyError, FastifyInstance } from "fastify";
-import cors from "@fastify/cors";
-import multipart from "@fastify/multipart";
-import {
-  serializerCompiler,
-  validatorCompiler,
-  type ZodTypeProvider,
-} from "fastify-type-provider-zod";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { createMcpServer } from "./common/mcp/server.js";
-import { requireAuth } from "./common/auth/middleware.js";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
-import { getMcpServerById, listMcpTools } from "./modules/mcp-tool-servers/mcp-tool-server.service.js";
-import { executeMcpTool } from "./modules/mcp-tool-servers/mcp-tool-executor.js";
-import { createMcpToolLog } from "./modules/mcp-tool-servers/mcp-tool-server.service.js";
+import usersModule, { MODULE_PREFIX as USERS_PREFIX } from "./modules/users/user.module.js";
 
 // Session tracker for MCP (Streamable HTTP)
 const mcpStreamableSessions = new Map<string, { transport: StreamableHTTPServerTransport; mcpServer: McpServer | ReturnType<typeof createMcpServer> }>();
@@ -106,7 +102,7 @@ async function createCustomMcpServer(serverId: string, authToken: string): Promi
           inputParams: params,
           outputResult: result.result,
           status: result.success ? "success" : "error",
-          errorMessage: result.success ? undefined : (result.stderr || "Execution error"),
+          errorMessage: result.success ? undefined : result.stderr || "Execution error",
           executionTimeMs: result.executionTimeMs,
         }).catch(() => {});
 
@@ -130,20 +126,20 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ── Module Registry (static — bun build compatible) ────────────────────────
 const MODULE_REGISTRY = [
-  { name: "api-docs",         plugin: apiDocsModule,         prefix: API_DOCS_PREFIX },
-  { name: "api-keys",         plugin: apiKeysModule,         prefix: API_KEYS_PREFIX },
-  { name: "auth",             plugin: authModule,             prefix: AUTH_PREFIX },
-  { name: "datatables",       plugin: datatablesModule,       prefix: DATATABLES_PREFIX },
-  { name: "mcp-tool-servers", plugin: mcpToolServersModule,   prefix: MCP_TOOL_SERVERS_PREFIX },
-  { name: "s3",               plugin: s3Module,               prefix: S3_PREFIX },
-  { name: "storage",          plugin: storageModule,          prefix: STORAGE_PREFIX },
-  { name: "users",            plugin: usersModule,            prefix: USERS_PREFIX },
-  { name: "kv-store",        plugin: kvStoreModule,          prefix: KV_STORE_PREFIX },
-  { name: "system",           plugin: systemModule,           prefix: SYSTEM_PREFIX },
-  { name: "dynamic-apis",     plugin: dynamicApisModule,      prefix: DYNAMIC_APIS_PREFIX },
-  { name: "llm-providers",    plugin: llmProvidersModule,     prefix: LLM_PROVIDERS_PREFIX },
-  { name: "configurations",   plugin: configurationsModule,   prefix: CONFIGURATIONS_PREFIX },
-  { name: "browsers",          plugin: browsersModule,          prefix: BROWSERS_PREFIX },
+  { name: "api-docs", plugin: apiDocsModule, prefix: API_DOCS_PREFIX },
+  { name: "api-keys", plugin: apiKeysModule, prefix: API_KEYS_PREFIX },
+  { name: "auth", plugin: authModule, prefix: AUTH_PREFIX },
+  { name: "datatables", plugin: datatablesModule, prefix: DATATABLES_PREFIX },
+  { name: "mcp-tool-servers", plugin: mcpToolServersModule, prefix: MCP_TOOL_SERVERS_PREFIX },
+  { name: "s3", plugin: s3Module, prefix: S3_PREFIX },
+  { name: "storage", plugin: storageModule, prefix: STORAGE_PREFIX },
+  { name: "users", plugin: usersModule, prefix: USERS_PREFIX },
+  { name: "kv-store", plugin: kvStoreModule, prefix: KV_STORE_PREFIX },
+  { name: "system", plugin: systemModule, prefix: SYSTEM_PREFIX },
+  { name: "dynamic-apis", plugin: dynamicApisModule, prefix: DYNAMIC_APIS_PREFIX },
+  { name: "llm-providers", plugin: llmProvidersModule, prefix: LLM_PROVIDERS_PREFIX },
+  { name: "configurations", plugin: configurationsModule, prefix: CONFIGURATIONS_PREFIX },
+  { name: "browsers", plugin: browsersModule, prefix: BROWSERS_PREFIX },
 ] as const;
 
 async function loadModules(app: FastifyInstance) {
@@ -174,31 +170,23 @@ export async function createApp() {
   app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024 * 1024 } });
 
   // ── Handle empty application/json bodies gracefully without throwing ──────
-  app.addContentTypeParser(
-    "application/json",
-    { parseAs: "string" },
-    (_req, body, done) => {
-      const text = typeof body === "string" ? body.trim() : "";
-      if (text === "") {
-        done(null, {});
-        return;
-      }
-      try {
-        const json = JSON.parse(text);
-        done(null, json);
-      } catch (err) {
-        (err as any).statusCode = 400;
-        done(err as Error, undefined);
-      }
+  app.addContentTypeParser("application/json", { parseAs: "string" }, (_req, body, done) => {
+    const text = typeof body === "string" ? body.trim() : "";
+    if (text === "") {
+      done(null, {});
+      return;
     }
-  );
+    try {
+      const json = JSON.parse(text);
+      done(null, json);
+    } catch (err) {
+      (err as any).statusCode = 400;
+      done(err as Error, undefined);
+    }
+  });
 
   // ── Binary content-type fallback (fix 415 on file upload) ────────────────
-  app.addContentTypeParser(
-    /^(?!application\/json|multipart\/).*$/,
-    { parseAs: "buffer" },
-    (_req, body, done) => done(null, body),
-  );
+  app.addContentTypeParser(/^(?!application\/json|multipart\/).*$/, { parseAs: "buffer" }, (_req, body, done) => done(null, body));
 
   // ── Global error handler ───────────────────────────────────────────────────
   app.setErrorHandler((err: FastifyError, req, reply) => {
@@ -351,10 +339,7 @@ export async function createApp() {
   });
 
   // ── Serve web SPA under /ui ─────────────────────────────────────────────────
-  const webDistPaths = [
-    join(__dirname, "../../web/dist"),
-    join(__dirname, "../public"),
-  ];
+  const webDistPaths = [join(__dirname, "../../web/dist"), join(__dirname, "../public")];
   const webDist = webDistPaths.find((p) => existsSync(join(p, "index.html")));
 
   if (webDist) {
@@ -384,9 +369,7 @@ export async function createApp() {
       // SPA fallback — serve index.html for all unmatched routes
       const indexFile = Bun.file(join(webDist, "index.html"));
       const buf = Buffer.from(await indexFile.arrayBuffer());
-      return reply
-        .header("Content-Type", "text/html; charset=utf-8")
-        .send(buf);
+      return reply.header("Content-Type", "text/html; charset=utf-8").send(buf);
     });
   }
 

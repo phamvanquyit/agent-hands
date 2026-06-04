@@ -1,11 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createApp } from "./app.js";
-import { getDb, closeDb } from "./common/db/client.js";
+import { closeDb, getDb } from "./common/db/client.js";
 import { runMigrations } from "./common/db/migrate.js";
 import { createSuperAdmin } from "./common/db/seed.js";
 import { startMcpServer } from "./common/mcp/server.js";
-
 
 export interface ServerOptions {
   port?: number;
@@ -16,10 +15,7 @@ export interface ServerOptions {
 export async function startServer(options: ServerOptions = {}): Promise<void> {
   const port = options.port ?? Number(process.env.PORT ?? "18080");
   const host = options.host ?? process.env.HOST ?? "127.0.0.1";
-  const dataDir =
-    options.dataDir ??
-    process.env.DATA_DIR ??
-    `${process.env.HOME}/.agent-hands`;
+  const dataDir = options.dataDir ?? process.env.DATA_DIR ?? `${process.env.HOME}/.agent-hands`;
 
   process.env.DATA_DIR = dataDir;
 
@@ -68,8 +64,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
 
 /** Create super admin — called by `agent-hands init` */
 export async function initSuperAdmin(): Promise<void> {
-  const dataDir =
-    process.env.DATA_DIR ?? `${process.env.HOME}/.agent-hands`;
+  const dataDir = process.env.DATA_DIR ?? `${process.env.HOME}/.agent-hands`;
 
   process.env.DATA_DIR = dataDir;
   runMigrations(dataDir);

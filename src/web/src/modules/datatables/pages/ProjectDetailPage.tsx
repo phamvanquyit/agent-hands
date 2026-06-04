@@ -305,12 +305,32 @@ export default function ProjectDetailPage() {
   }, [activeTable, tableColumns]);
 
   // ── AG Grid Row Data ──
+  // Resolve column name keys → column ID keys for backward compatibility
+  // (data inserted via MCP/API using column names instead of IDs)
   const agRowData = useMemo(() => {
-    return rows.map((row) => ({
-      __rowId: row.id,
-      ...row.data,
-    }));
-  }, [rows]);
+    const nameToId = new Map<string, string>();
+    for (const col of tableColumns) {
+      nameToId.set(col.name.toLowerCase(), col.id);
+    }
+
+    return rows.map((row) => {
+      const resolved: Record<string, unknown> = { __rowId: row.id };
+      for (const [key, value] of Object.entries(row.data)) {
+        if (key.startsWith("col_")) {
+          resolved[key] = value;
+        } else {
+          // Try to resolve column name → ID
+          const colId = nameToId.get(key.toLowerCase());
+          if (colId) {
+            resolved[colId] = value;
+          } else {
+            resolved[key] = value;
+          }
+        }
+      }
+      return resolved;
+    });
+  }, [rows, tableColumns]);
 
   // ── AG Grid cell edit handler ──
   const onCellValueChanged = useCallback(
@@ -406,7 +426,7 @@ export default function ProjectDetailPage() {
         }
       },
     });
-  }, [id, activeTableId, fetchRows]);
+  }, [id, activeTableId]);
 
   // ── Loading ──
   if (loading) {
@@ -1221,6 +1241,11 @@ function EditColumnModal({
 //  FILTER DROPDOWN
 // ══════════════════════════════════════════════════════════════════════════════
 
+// Internal filter type with stable key for React rendering
+interface FilterWithKey extends FilterCondition {
+  _key: number;
+}
+
 function FilterDropdown({
   columns,
   filters,
@@ -1236,6 +1261,34 @@ function FilterDropdown({
   onFilterLogicChange: (logic: "and" | "or") => void;
   onClose: () => void;
 }) {
+  // Stable key counter for filter rows (avoids using array index as key)
+  const nextKeyRef = useRef(0);
+  const keyedFiltersRef = useRef<FilterWithKey[]>([]);
+
+  // Sync external filters with internal keyed filters
+  // Assign _key to new filters, preserve existing keys
+  if (filters.length !== keyedFiltersRef.current.length) {
+    if (filters.length > keyedFiltersRef.current.length) {
+      // Filters added — assign keys to new ones
+      const existing = keyedFiltersRef.current;
+      const newOnes = filters.slice(existing.length).map((f) => ({
+        ...f,
+        _key: nextKeyRef.current++,
+      }));
+      keyedFiltersRef.current = [...existing, ...newOnes];
+    } else {
+      // Filters removed — rebuild from current filters using existing keys where possible
+      keyedFiltersRef.current = keyedFiltersRef.current.slice(0, filters.length);
+    }
+  }
+  // Keep data in sync
+  keyedFiltersRef.current = keyedFiltersRef.current.map((kf, i) => ({
+    ...filters[i],
+    _key: kf._key,
+  }));
+
+  const keyedFilters = keyedFiltersRef.current;
+
   const addFilter = () => {
     if (columns.length === 0) return;
     const col = columns[0];
@@ -1319,13 +1372,13 @@ function FilterDropdown({
           </div>
         ) : (
           <div className="flex flex-col gap-2">
-            {filters.map((filter, index) => {
+            {keyedFilters.map((filter, index) => {
               const colType = getColumnType(filter.columnId || "");
               const operators = FILTER_OPERATORS_BY_TYPE[colType] ?? FILTER_OPERATORS_BY_TYPE.text;
               const needsValue = !NO_VALUE_OPERATORS.includes(filter.operator);
 
               return (
-                <div key={index} className="flex items-center gap-2">
+                <div key={filter._key} className="flex items-center gap-2">
                   {/* Logic label */}
                   <span className="font-mono text-[10px] uppercase tracking-wide text-muted-soft w-[36px] text-right shrink-0">
                     {index === 0 ? "Where" : filterLogic.toUpperCase()}

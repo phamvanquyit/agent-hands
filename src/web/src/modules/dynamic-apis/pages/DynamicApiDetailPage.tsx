@@ -1,11 +1,12 @@
 import { Modal, Spin, Tabs, message } from "antd";
 import { AlertTriangle, Bot, Clock, PanelRightClose, PanelRightOpen, Play, Terminal } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+
 import { API_BASE, client } from "src/lib/client";
 import { AgentHandsError } from "src/lib/http";
 import type { DynamicApiItem, DynamicApiLogItem } from "src/lib/types";
 
+import { useNavigate, useParams } from "react-router-dom";
 import { AiCodingPanel } from "../components/AiCodingPanel";
 import { EndpointHeader } from "../components/EndpointHeader";
 import { HandlerCodeEditor } from "../components/HandlerCodeEditor";
@@ -79,9 +80,16 @@ export default function DynamicApiDetailPage() {
   // AI pending code (for diff review)
   const [pendingCode, setPendingCode] = useState<string | null>(null);
 
-  // Dirty tracking via savedCodeRef (same pattern as MCP useToolEditor)
+  // Dirty tracking — track fields that require manual Save
+  // (isActive and isPublic auto-save immediately, so excluded here)
   const savedCodeRef = useRef(DEFAULT_CODE);
-  const isDirty = code !== savedCodeRef.current;
+  const savedMetaRef = useRef({ name: "", method: "GET" as DynamicApiItem["method"], path: "", timeout: 30000 });
+  const isDirty =
+    code !== savedCodeRef.current ||
+    name !== savedMetaRef.current.name ||
+    method !== savedMetaRef.current.method ||
+    path !== savedMetaRef.current.path ||
+    timeout !== savedMetaRef.current.timeout;
 
   // ── Data Fetching ──────────────────────────────────────────────────────────
 
@@ -99,6 +107,7 @@ export default function DynamicApiDetailPage() {
       setIsActive(data.isActive);
       setIsPublic(data.isPublic);
       setTimeoutVal(data.timeout);
+      savedMetaRef.current = { name: data.name, method: data.method, path: data.path, timeout: data.timeout };
 
       // If there's a pending draft from AI, show it as a diff
       if (data.draftCode && data.draftCode !== data.code) {
@@ -170,6 +179,7 @@ export default function DynamicApiDetailPage() {
       });
       setApi(updated);
       savedCodeRef.current = codeToSave;
+      savedMetaRef.current = { name, method, path, timeout };
       message.success("Saved");
     } catch (err) {
       if (err instanceof AgentHandsError) message.error(err.message);
@@ -248,17 +258,14 @@ export default function DynamicApiDetailPage() {
   };
 
   // ── AI code apply handler (same flow as MCP tools) ───────────────────────
-  const handleApplyCode = useCallback(
-    (newCode: string, isFinal?: boolean) => {
-      if (isFinal) {
-        setCode(newCode);
-        setPendingCode(null);
-      } else {
-        setPendingCode(newCode);
-      }
-    },
-    [],
-  );
+  const handleApplyCode = useCallback((newCode: string, isFinal?: boolean) => {
+    if (isFinal) {
+      setCode(newCode);
+      setPendingCode(null);
+    } else {
+      setPendingCode(newCode);
+    }
+  }, []);
 
   // ── Pending code accept/reject (same flow as MCP tools) ──────────────────
   const handleAcceptPending = async () => {
@@ -339,8 +346,17 @@ export default function DynamicApiDetailPage() {
         onBack={() => navigate("/dynamic-apis")}
         onDelete={handleDelete}
         onSave={handleSave}
-        onActiveChange={(checked) => {
+        onActiveChange={async (checked) => {
           setIsActive(checked);
+          if (!id) return;
+          try {
+            const updated = await client.dynamicApis.update(id, { isActive: checked });
+            setApi(updated);
+          } catch (err) {
+            setIsActive(!checked); // revert on failure
+            if (err instanceof AgentHandsError) message.error(err.message);
+            else message.error("Failed to update");
+          }
         }}
         onNameChange={(v) => {
           setName(v);
@@ -351,8 +367,17 @@ export default function DynamicApiDetailPage() {
         onPathChange={(v) => {
           setPath(v);
         }}
-        onPublicChange={(v) => {
+        onPublicChange={async (v) => {
           setIsPublic(v);
+          if (!id) return;
+          try {
+            const updated = await client.dynamicApis.update(id, { isPublic: v });
+            setApi(updated);
+          } catch (err) {
+            setIsPublic(!v); // revert on failure
+            if (err instanceof AgentHandsError) message.error(err.message);
+            else message.error("Failed to update");
+          }
         }}
         onTimeoutChange={(v) => {
           setTimeoutVal(v);
@@ -454,13 +479,7 @@ export default function DynamicApiDetailPage() {
               <div className="w-[1px] h-8 bg-hairline-strong rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
             </div>
             <div className="flex flex-col shrink-0 overflow-hidden" style={{ width: aiPanelWidth }}>
-              <AiCodingPanel
-                apiId={api.id}
-                method={method}
-                path={path}
-                currentCode={code}
-                onApplyCode={handleApplyCode}
-              />
+              <AiCodingPanel apiId={api.id} method={method} path={path} currentCode={code} onApplyCode={handleApplyCode} />
             </div>
           </>
         )}

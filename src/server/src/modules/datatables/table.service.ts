@@ -1,17 +1,17 @@
-import { eq, and, sql, desc, asc } from "drizzle-orm";
+import { asc, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "../../common/db/client.js";
-import { dynamicTables, dynamicTableRows } from "../../common/db/schema.js";
+import { dynamicTableRows, dynamicTables } from "../../common/db/schema.js";
 import { genId, now } from "../../common/utils.js";
 import type {
-  CreateTableBody,
-  UpdateTableBody,
   AddColumnBody,
-  UpdateColumnBody,
-  CreateRowBody,
-  UpdateRowBody,
-  ListRowsQuery,
   ColumnDef,
+  CreateRowBody,
+  CreateTableBody,
   FilterCondition,
+  ListRowsQuery,
+  UpdateColumnBody,
+  UpdateRowBody,
+  UpdateTableBody,
 } from "./table.schema.js";
 import { filterConditionSchema } from "./table.schema.js";
 
@@ -52,12 +52,7 @@ function formatRow(row: typeof dynamicTableRows.$inferSelect) {
 export async function listTables(projectId: string) {
   const db = getDb();
 
-  const rows = await db
-    .select()
-    .from(dynamicTables)
-    .where(eq(dynamicTables.projectId, projectId))
-    .orderBy(desc(dynamicTables.updatedAt))
-    .all();
+  const rows = await db.select().from(dynamicTables).where(eq(dynamicTables.projectId, projectId)).orderBy(desc(dynamicTables.updatedAt)).all();
 
   // Add row counts
   const tables = rows.map(formatTable);
@@ -80,18 +75,10 @@ export async function listTables(projectId: string) {
 
 export async function getTableById(id: string) {
   const db = getDb();
-  const row = await db
-    .select()
-    .from(dynamicTables)
-    .where(eq(dynamicTables.id, id))
-    .get();
+  const row = await db.select().from(dynamicTables).where(eq(dynamicTables.id, id)).get();
   if (!row) return null;
 
-  const countResult = await db
-    .select({ count: sql<number>`COUNT(*)` })
-    .from(dynamicTableRows)
-    .where(eq(dynamicTableRows.tableId, id))
-    .get();
+  const countResult = await db.select({ count: sql<number>`COUNT(*)` }).from(dynamicTableRows).where(eq(dynamicTableRows.tableId, id)).get();
 
   return {
     ...formatTable(row),
@@ -153,11 +140,7 @@ export async function deleteTable(id: string) {
 
 export async function addColumn(tableId: string, data: AddColumnBody) {
   const db = getDb();
-  const table = await db
-    .select()
-    .from(dynamicTables)
-    .where(eq(dynamicTables.id, tableId))
-    .get();
+  const table = await db.select().from(dynamicTables).where(eq(dynamicTables.id, tableId)).get();
   if (!table) return null;
 
   const columns = parseColumns(table.columns);
@@ -182,17 +165,9 @@ export async function addColumn(tableId: string, data: AddColumnBody) {
   return newCol;
 }
 
-export async function updateColumn(
-  tableId: string,
-  colId: string,
-  data: UpdateColumnBody,
-) {
+export async function updateColumn(tableId: string, colId: string, data: UpdateColumnBody) {
   const db = getDb();
-  const table = await db
-    .select()
-    .from(dynamicTables)
-    .where(eq(dynamicTables.id, tableId))
-    .get();
+  const table = await db.select().from(dynamicTables).where(eq(dynamicTables.id, tableId)).get();
   if (!table) return null;
 
   const columns = parseColumns(table.columns);
@@ -215,11 +190,7 @@ export async function updateColumn(
 
 export async function deleteColumn(tableId: string, colId: string) {
   const db = getDb();
-  const table = await db
-    .select()
-    .from(dynamicTables)
-    .where(eq(dynamicTables.id, tableId))
-    .get();
+  const table = await db.select().from(dynamicTables).where(eq(dynamicTables.id, tableId)).get();
   if (!table) return null;
 
   const columns = parseColumns(table.columns);
@@ -239,11 +210,7 @@ export async function deleteColumn(tableId: string, colId: string) {
     .where(eq(dynamicTables.id, tableId));
 
   // Remove the column data from all rows
-  const rows = await db
-    .select()
-    .from(dynamicTableRows)
-    .where(eq(dynamicTableRows.tableId, tableId))
-    .all();
+  const rows = await db.select().from(dynamicTableRows).where(eq(dynamicTableRows.tableId, tableId)).all();
 
   for (const row of rows) {
     const rowData = parseData(row.data);
@@ -259,11 +226,7 @@ export async function deleteColumn(tableId: string, colId: string) {
 
 export async function reorderColumns(tableId: string, columnIds: string[]) {
   const db = getDb();
-  const table = await db
-    .select()
-    .from(dynamicTables)
-    .where(eq(dynamicTables.id, tableId))
-    .get();
+  const table = await db.select().from(dynamicTables).where(eq(dynamicTables.id, tableId)).get();
   if (!table) return null;
 
   const columns = parseColumns(table.columns);
@@ -316,19 +279,14 @@ function parseFilters(filterStr?: string): FilterCondition[] {
  * Accepts both `columnId` (ID) and `column` (name). `column` name is resolved
  * case-insensitively against the table's column definitions.
  */
-function resolveFilters(
-  filters: FilterCondition[],
-  columns: ColumnDef[],
-): FilterCondition[] {
+function resolveFilters(filters: FilterCondition[], columns: ColumnDef[]): FilterCondition[] {
   return filters
     .map((f) => {
       // Already has columnId → use as-is
       if (f.columnId) return f;
       // Resolve column name → ID (case-insensitive)
       if (f.column) {
-        const col = columns.find(
-          (c) => c.name.toLowerCase() === f.column!.toLowerCase(),
-        );
+        const col = columns.find((c) => c.name.toLowerCase() === f.column!.toLowerCase());
         if (!col) return null; // unknown column name → skip
         return { ...f, columnId: col.id };
       }
@@ -337,10 +295,7 @@ function resolveFilters(
     .filter((f): f is FilterCondition & { columnId: string } => f !== null);
 }
 
-function matchesCondition(
-  rowData: Record<string, unknown>,
-  condition: FilterCondition,
-): boolean {
+function matchesCondition(rowData: Record<string, unknown>, condition: FilterCondition): boolean {
   if (!condition.columnId) return true; // skip if no columnId resolved
   const cellValue = rowData[condition.columnId];
   const filterValue = condition.value;
@@ -358,13 +313,21 @@ function matchesCondition(
       if (typeof cellValue === "boolean") return cellValue !== (filterValue === true || filterValue === "true");
       return String(cellValue ?? "").toLowerCase() !== String(filterValue ?? "").toLowerCase();
     case "contains":
-      return String(cellValue ?? "").toLowerCase().includes(String(filterValue ?? "").toLowerCase());
+      return String(cellValue ?? "")
+        .toLowerCase()
+        .includes(String(filterValue ?? "").toLowerCase());
     case "not_contains":
-      return !String(cellValue ?? "").toLowerCase().includes(String(filterValue ?? "").toLowerCase());
+      return !String(cellValue ?? "")
+        .toLowerCase()
+        .includes(String(filterValue ?? "").toLowerCase());
     case "starts_with":
-      return String(cellValue ?? "").toLowerCase().startsWith(String(filterValue ?? "").toLowerCase());
+      return String(cellValue ?? "")
+        .toLowerCase()
+        .startsWith(String(filterValue ?? "").toLowerCase());
     case "ends_with":
-      return String(cellValue ?? "").toLowerCase().endsWith(String(filterValue ?? "").toLowerCase());
+      return String(cellValue ?? "")
+        .toLowerCase()
+        .endsWith(String(filterValue ?? "").toLowerCase());
     case "gt":
       return Number(cellValue) > Number(filterValue);
     case "gte":
@@ -378,16 +341,57 @@ function matchesCondition(
   }
 }
 
-function matchesAllFilters(
-  rowData: Record<string, unknown>,
-  conditions: FilterCondition[],
-  logic: "and" | "or",
-): boolean {
+function matchesAllFilters(rowData: Record<string, unknown>, conditions: FilterCondition[], logic: "and" | "or"): boolean {
   if (conditions.length === 0) return true;
   if (logic === "or") {
     return conditions.some((c) => matchesCondition(rowData, c));
   }
   return conditions.every((c) => matchesCondition(rowData, c));
+}
+
+// ── Row data key resolution (column name → column ID) ──────────────────────────
+
+/**
+ * Resolve data keys that are column names to column IDs.
+ * Accepts both column IDs (col_xxx) and column names (case-insensitive).
+ * This allows MCP agents and API clients to use human-readable column names.
+ */
+async function resolveDataKeys(tableId: string, data: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (!data || Object.keys(data).length === 0) return data;
+
+  // Check if any key is NOT a column ID (doesn't start with "col_")
+  const needsResolution = Object.keys(data).some((key) => !key.startsWith("col_"));
+  if (!needsResolution) return data;
+
+  // Load table columns for name→ID resolution
+  const db = getDb();
+  const table = await db.select().from(dynamicTables).where(eq(dynamicTables.id, tableId)).get();
+  if (!table) return data;
+
+  const columns = parseColumns(table.columns);
+  const nameToId = new Map<string, string>();
+  for (const col of columns) {
+    nameToId.set(col.name.toLowerCase(), col.id);
+  }
+
+  const resolved: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (key.startsWith("col_")) {
+      // Already a column ID
+      resolved[key] = value;
+    } else {
+      // Try to resolve column name → ID (case-insensitive)
+      const colId = nameToId.get(key.toLowerCase());
+      if (colId) {
+        resolved[colId] = value;
+      } else {
+        // Keep original key if no match (may be intentional)
+        resolved[key] = value;
+      }
+    }
+  }
+
+  return resolved;
 }
 
 // ── Row CRUD ────────────────────────────────────────────────────────────────────
@@ -424,9 +428,7 @@ export async function listRows(tableId: string, query: ListRowsQuery) {
     }
     // If colRef is not a column ID (doesn't start with col_), try resolve by name
     if (!colRef.startsWith("col_")) {
-      const col = tableColumns.find(
-        (c) => c.name.toLowerCase() === colRef.toLowerCase(),
-      );
+      const col = tableColumns.find((c) => c.name.toLowerCase() === colRef.toLowerCase());
       if (col) colRef = col.id;
     }
     sortByColumn = colRef;
@@ -434,18 +436,11 @@ export async function listRows(tableId: string, query: ListRowsQuery) {
 
   if (filters.length === 0 && !sortByColumn) {
     // Fast path — no filter, standard sort → direct SQL
-    const countResult = await db
-      .select({ count: sql<number>`COUNT(*)` })
-      .from(dynamicTableRows)
-      .where(eq(dynamicTableRows.tableId, tableId))
-      .get();
+    const countResult = await db.select({ count: sql<number>`COUNT(*)` }).from(dynamicTableRows).where(eq(dynamicTableRows.tableId, tableId)).get();
     const total = countResult?.count ?? 0;
 
     const orderFn = sortDirection === "asc" ? asc : desc;
-    const orderCol =
-      query.sort === "created_at"
-        ? dynamicTableRows.createdAt
-        : dynamicTableRows.updatedAt;
+    const orderCol = query.sort === "created_at" ? dynamicTableRows.createdAt : dynamicTableRows.updatedAt;
 
     const offset = (page - 1) * limit;
     const rows = await db
@@ -464,19 +459,13 @@ export async function listRows(tableId: string, query: ListRowsQuery) {
   }
 
   // Slow path — need to load all rows for in-memory filter/sort
-  const allRows = await db
-    .select()
-    .from(dynamicTableRows)
-    .where(eq(dynamicTableRows.tableId, tableId))
-    .all();
+  const allRows = await db.select().from(dynamicTableRows).where(eq(dynamicTableRows.tableId, tableId)).all();
 
   let formatted = allRows.map(formatRow);
 
   // Apply filters
   if (filters.length > 0) {
-    formatted = formatted.filter((row) =>
-      matchesAllFilters(row.data, filters, filterLogic),
-    );
+    formatted = formatted.filter((row) => matchesAllFilters(row.data, filters, filterLogic));
   }
 
   // Apply sort
@@ -518,28 +507,23 @@ export async function listRows(tableId: string, query: ListRowsQuery) {
 
 export async function getRowById(tableId: string, rowId: string) {
   const db = getDb();
-  const row = await db
-    .select()
-    .from(dynamicTableRows)
-    .where(eq(dynamicTableRows.id, rowId))
-    .get();
+  const row = await db.select().from(dynamicTableRows).where(eq(dynamicTableRows.id, rowId)).get();
   if (!row || row.tableId !== tableId) return null;
   return formatRow(row);
 }
 
-export async function createRow(
-  tableId: string,
-  data: CreateRowBody,
-  userId: string,
-) {
+export async function createRow(tableId: string, data: CreateRowBody, userId: string) {
   const db = getDb();
   const id = genId("dtr");
   const ts = now();
 
+  // Resolve column names → column IDs for LLM-friendly API
+  const resolvedData = await resolveDataKeys(tableId, data.data ?? {});
+
   await db.insert(dynamicTableRows).values({
     id,
     tableId,
-    data: JSON.stringify(data.data ?? {}),
+    data: JSON.stringify(resolvedData),
     createdBy: userId,
     createdAt: ts,
     updatedAt: ts,
@@ -548,22 +532,17 @@ export async function createRow(
   return getRowById(tableId, id);
 }
 
-export async function updateRow(
-  tableId: string,
-  rowId: string,
-  data: UpdateRowBody,
-) {
+export async function updateRow(tableId: string, rowId: string, data: UpdateRowBody) {
   const db = getDb();
-  const existing = await db
-    .select()
-    .from(dynamicTableRows)
-    .where(eq(dynamicTableRows.id, rowId))
-    .get();
+  const existing = await db.select().from(dynamicTableRows).where(eq(dynamicTableRows.id, rowId)).get();
   if (!existing || existing.tableId !== tableId) return null;
+
+  // Resolve column names → column IDs for LLM-friendly API
+  const resolvedNewData = await resolveDataKeys(tableId, data.data ?? {});
 
   // Merge data — only update provided fields
   const existingData = parseData(existing.data);
-  const mergedData = { ...existingData, ...data.data };
+  const mergedData = { ...existingData, ...resolvedNewData };
 
   await db
     .update(dynamicTableRows)
@@ -578,11 +557,7 @@ export async function updateRow(
 
 export async function deleteRow(tableId: string, rowId: string) {
   const db = getDb();
-  const existing = await db
-    .select()
-    .from(dynamicTableRows)
-    .where(eq(dynamicTableRows.id, rowId))
-    .get();
+  const existing = await db.select().from(dynamicTableRows).where(eq(dynamicTableRows.id, rowId)).get();
   if (!existing || existing.tableId !== tableId) return false;
 
   await db.delete(dynamicTableRows).where(eq(dynamicTableRows.id, rowId));
@@ -594,11 +569,7 @@ export async function bulkDeleteRows(tableId: string, rowIds: string[]) {
   let deleted = 0;
 
   for (const rowId of rowIds) {
-    const existing = await db
-      .select()
-      .from(dynamicTableRows)
-      .where(eq(dynamicTableRows.id, rowId))
-      .get();
+    const existing = await db.select().from(dynamicTableRows).where(eq(dynamicTableRows.id, rowId)).get();
     if (existing && existing.tableId === tableId) {
       await db.delete(dynamicTableRows).where(eq(dynamicTableRows.id, rowId));
       deleted++;
@@ -608,10 +579,7 @@ export async function bulkDeleteRows(tableId: string, rowIds: string[]) {
   return { deleted };
 }
 
-export async function bulkUpdateRows(
-  tableId: string,
-  updates: { rowId: string; data: Record<string, unknown> }[],
-) {
+export async function bulkUpdateRows(tableId: string, updates: { rowId: string; data: Record<string, unknown> }[]) {
   const results: ReturnType<typeof formatRow>[] = [];
 
   for (const { rowId, data } of updates) {
