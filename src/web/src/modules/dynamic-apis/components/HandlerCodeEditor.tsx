@@ -1,9 +1,11 @@
 import Editor, { DiffEditor, type Monaco } from "@monaco-editor/react";
 import { Dropdown } from "antd";
 import { BookOpen, Check, X } from "lucide-react";
-import { useCallback, useRef } from "react";
+import { useCallback, useMemo } from "react";
+import { installMonacoErrorSuppressor } from "../../../lib/monaco-error-suppressor";
 
-type EditorInstance = Parameters<NonNullable<React.ComponentProps<typeof Editor>["onMount"]>>[0];
+installMonacoErrorSuppressor();
+
 type MonacoInstance = Parameters<NonNullable<React.ComponentProps<typeof Editor>["onMount"]>>[1];
 type ITextModel = Parameters<Parameters<ReturnType<MonacoInstance["languages"]["registerCompletionItemProvider"]>["provideCompletionItems"]>>[0];
 type IPosition = Parameters<Parameters<ReturnType<MonacoInstance["languages"]["registerCompletionItemProvider"]>["provideCompletionItems"]>>[1];
@@ -173,6 +175,45 @@ export default async function handler(request, context) {
   },
 ];
 
+// ── Constants ────────────────────────────────────────────────────────────────
+
+const HANDLER_EDITOR_PATH = "handler-editor.js";
+
+const EDITOR_OPTIONS = {
+  minimap: { enabled: false },
+  fontSize: 13,
+  lineHeight: 1.6,
+  padding: { top: 12, bottom: 12 },
+  tabSize: 2,
+  scrollBeyondLastLine: false,
+  automaticLayout: true,
+  stickyScroll: { enabled: false },
+  wordWrap: "off" as const,
+  renderLineHighlight: "line" as const,
+  cursorBlinking: "smooth" as const,
+  smoothScrolling: true,
+  bracketPairColorization: { enabled: true },
+  fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace",
+  fontLigatures: true,
+  quickSuggestions: true,
+  suggestOnTriggerCharacters: true,
+  wordBasedSuggestions: "off" as const,
+};
+
+const DIFF_EDITOR_OPTIONS = {
+  minimap: { enabled: false },
+  fontSize: 13,
+  lineHeight: 1.6,
+  padding: { top: 12, bottom: 48 },
+  scrollBeyondLastLine: false,
+  automaticLayout: true,
+  readOnly: true,
+  renderSideBySide: false,
+  wordWrap: "off" as const,
+  fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace",
+  fontLigatures: true,
+};
+
 // ── Component ───────────────────────────────────────────────────────────────
 
 interface HandlerCodeEditorProps {
@@ -266,6 +307,7 @@ declare var context: {
   monaco.languages.registerCompletionItemProvider("javascript", {
     triggerCharacters: ["."],
     provideCompletionItems: (model: ITextModel, position: IPosition) => {
+      if (!model.uri.path.includes("handler-editor")) return { suggestions: [] };
       const line = model.getValueInRange({
         startLineNumber: position.lineNumber,
         startColumn: 1,
@@ -321,6 +363,7 @@ declare var context: {
   // ── HoverProvider ───────────────────────────────────────────────────────
   monaco.languages.registerHoverProvider("javascript", {
     provideHover: (model: ITextModel, position: IPosition) => {
+      if (!model.uri.path.includes("handler-editor")) return null;
       const word = model.getWordAtPosition(position);
       if (!word) return null;
 
@@ -391,24 +434,21 @@ declare var context: {
 }
 
 export function HandlerCodeEditor({ value, onChange, pendingCode, onAcceptPending, onRejectPending }: HandlerCodeEditorProps) {
-  const editorRef = useRef<EditorInstance | null>(null);
-  const diffEditorRef = useRef<any>(null);
-  const monacoRef = useRef<Monaco | null>(null);
-
   const hasPending = !!pendingCode && pendingCode !== value;
 
   const handleBeforeMount = useCallback((monaco: Monaco) => {
-    monacoRef.current = monaco;
     registerProviders(monaco);
   }, []);
 
-  const handleEditorMount = useCallback((ed: EditorInstance) => {
-    editorRef.current = ed;
-  }, []);
-
-  const handleDiffMount = useCallback((editor: any) => {
-    diffEditorRef.current = editor;
-  }, []);
+  const menuItems = useMemo(
+    () =>
+      EXAMPLES.map((ex) => ({
+        key: ex.key,
+        label: <span className="font-mono text-[12px]">{ex.label}</span>,
+        onClick: () => onChange(ex.code.trim()),
+      })),
+    [onChange],
+  );
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
@@ -418,16 +458,7 @@ export function HandlerCodeEditor({ value, onChange, pendingCode, onAcceptPendin
           {hasPending && <span className="font-mono text-[10px] text-[#8b5cf6] bg-[#8b5cf620] px-1.5 py-0.5 rounded">AI Changes Pending</span>}
         </div>{" "}
         <div className="flex items-center gap-1.5">
-          <Dropdown
-            menu={{
-              items: EXAMPLES.map((ex) => ({
-                key: ex.key,
-                label: <span className="font-mono text-[12px]">{ex.label}</span>,
-                onClick: () => onChange(ex.code.trim()),
-              })),
-            }}
-            trigger={["click"]}
-          >
+          <Dropdown menu={{ items: menuItems }} trigger={["click"]}>
             <button className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono text-muted-soft bg-transparent border border-hairline hover:border-hairline-strong hover:text-ink transition-colors cursor-pointer">
               <BookOpen size={11} />
               Examples
@@ -436,58 +467,23 @@ export function HandlerCodeEditor({ value, onChange, pendingCode, onAcceptPendin
         </div>
       </div>
       <div className="flex-1 min-h-0 overflow-hidden border border-hairline relative">
-        <div style={{ display: hasPending ? "block" : "none" }} className="w-full h-full">
-          <DiffEditor
-            original={value}
-            modified={pendingCode || ""}
-            language="javascript"
-            theme="vs-dark"
-            onMount={handleDiffMount}
-            options={{
-              minimap: { enabled: false },
-              fontSize: 13,
-              lineHeight: 1.6,
-              padding: { top: 12, bottom: 48 },
-              scrollBeyondLastLine: false,
-              automaticLayout: true,
-              readOnly: true,
-              renderSideBySide: false,
-              wordWrap: "off",
-              fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace",
-              fontLigatures: true,
-            }}
-          />
-        </div>
-        <div style={{ display: hasPending ? "none" : "block" }} className="w-full h-full">
-          <Editor
-            defaultLanguage="javascript"
-            value={value}
-            onChange={(v) => onChange(v ?? "")}
-            theme="vs-dark"
-            beforeMount={handleBeforeMount}
-            onMount={handleEditorMount}
-            options={{
-              minimap: { enabled: false },
-              fontSize: 13,
-              lineHeight: 1.6,
-              padding: { top: 12, bottom: 12 },
-              tabSize: 2,
-              scrollBeyondLastLine: false,
-              automaticLayout: true,
-              stickyScroll: { enabled: false },
-              wordWrap: "off",
-              renderLineHighlight: "line",
-              cursorBlinking: "smooth",
-              smoothScrolling: true,
-              bracketPairColorization: { enabled: true },
-              fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace",
-              fontLigatures: true,
-              quickSuggestions: true,
-              suggestOnTriggerCharacters: true,
-              wordBasedSuggestions: "off",
-            }}
-          />
-        </div>
+        {hasPending ? (
+          <div className="w-full h-full">
+            <DiffEditor original={value} modified={pendingCode || ""} language="javascript" theme="vs-dark" options={DIFF_EDITOR_OPTIONS} />
+          </div>
+        ) : (
+          <div className="w-full h-full">
+            <Editor
+              defaultLanguage="javascript"
+              path={HANDLER_EDITOR_PATH}
+              value={value}
+              onChange={(v) => onChange(v ?? "")}
+              theme="vs-dark"
+              beforeMount={handleBeforeMount}
+              options={EDITOR_OPTIONS}
+            />
+          </div>
+        )}
 
         {hasPending && (
           <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 px-2.5 py-2 rounded-md bg-[#181818] border border-[#2d2d2d] shadow-[0_8px_24px_rgba(0,0,0,0.5)]">
