@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import Fastify from "fastify";
 import type { FastifyError, FastifyInstance } from "fastify";
@@ -34,6 +35,9 @@ import usersModule, { MODULE_PREFIX as USERS_PREFIX } from "./modules/users/user
 
 // Session tracker for MCP (Streamable HTTP)
 const mcpStreamableSessions = new Map<string, { transport: StreamableHTTPServerTransport; mcpServer: McpServer | ReturnType<typeof createMcpServer> }>();
+
+// Session tracker for MCP (Legacy SSE)
+const mcpSseSessions = new Map<string, { transport: SSEServerTransport; mcpServer: McpServer | ReturnType<typeof createMcpServer> }>();
 
 /**
  * Create an MCP server for a custom MCP tool server.
@@ -346,6 +350,56 @@ export async function createApp() {
     }
 
     return reply.code(200).send({ ok: true });
+  });
+
+  // ── MCP Legacy SSE Transport (protocol version 2024-11-05) ─────────────────
+  // Backwards compatible for older MCP clients that don't support Streamable HTTP.
+  // Uses two separate endpoints: GET /sse (SSE stream) + POST /messages (JSON-RPC)
+
+  // GET /api/mcp/:serverId/sse — establish SSE stream
+  app.get("/api/mcp/:serverId/sse", { preHandler: [requireAuth] }, async (req, reply) => {
+    const { serverId } = req.params as { serverId: string };
+    const authHeader = req.headers.authorization;
+    const authToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : "";
+
+    // Create MCP server (builtin or custom)
+    let mcpServer: McpServer | ReturnType<typeof createMcpServer>;
+    const customServer = await createCustomMcpServer(serverId, authToken);
+    if (customServer) {
+      mcpServer = customServer;
+    } else {
+      mcpServer = createMcpServer();
+    }
+
+    // Hijack response for raw SSE streaming
+    reply.hijack();
+
+    const transport = new SSEServerTransport(`/api/mcp/${serverId}/messages`, reply.raw);
+
+    // Store session and clean up on close
+    mcpSseSessions.set(transport.sessionId, { transport, mcpServer });
+    reply.raw.on("close", () => {
+      mcpSseSessions.delete(transport.sessionId);
+    });
+
+    await mcpServer.connect(transport);
+    await transport.start();
+  });
+
+  // POST /api/mcp/:serverId/messages — receive JSON-RPC messages for SSE sessions
+  app.post("/api/mcp/:serverId/messages", { preHandler: [requireAuth] }, async (req, reply) => {
+    const sessionId = (req.query as Record<string, string>).sessionId;
+    if (!sessionId) {
+      return reply.code(400).send({ error: "bad_request", message: "Missing sessionId query parameter" });
+    }
+
+    const session = mcpSseSessions.get(sessionId);
+    if (!session) {
+      return reply.code(404).send({ error: "not_found", message: "SSE session not found" });
+    }
+
+    reply.hijack();
+    await session.transport.handlePostMessage(req.raw, reply.raw, req.body);
   });
 
   // ── Serve web SPA under /ui ─────────────────────────────────────────────────

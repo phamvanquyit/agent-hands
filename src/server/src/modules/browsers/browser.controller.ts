@@ -1,32 +1,22 @@
-import type { FastifyInstance } from "fastify";
-import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { FastifyInstance } from "fastify";
+import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { requireAuth } from "../../common/auth/middleware.js";
+import { createProfileBodySchema, listProfilesQuerySchema, runStepsBodySchema, updateProfileBodySchema } from "./browser.schema.js";
+import type { CreateProfileBody, ListProfilesQuery, RunStepsBody, UpdateProfileBody } from "./browser.schema.js";
 import {
-  createProfileBodySchema,
-  updateProfileBodySchema,
-  listProfilesQuerySchema,
-  runStepsBodySchema,
-} from "./browser.schema.js";
-import type {
-  CreateProfileBody,
-  UpdateProfileBody,
-  ListProfilesQuery,
-  RunStepsBody,
-} from "./browser.schema.js";
-import {
-  listBrowserProfiles,
-  getBrowserProfileById,
+  captureScreenshot,
   createBrowserProfile,
-  updateBrowserProfile,
   deleteBrowserProfile,
+  getActiveTabs,
+  getBrowserProfileById,
+  getScreenshotsDir,
+  listBrowserProfiles,
+  runBatchSteps,
   startBrowser,
   stopBrowser,
-  captureScreenshot,
-  getActiveTabs,
-  runBatchSteps,
-  getScreenshotsDir,
+  updateBrowserProfile,
 } from "./browser.service.js";
 
 export function registerBrowserRoutes(app: FastifyInstance) {
@@ -154,7 +144,6 @@ export function registerBrowserRoutes(app: FastifyInstance) {
     }
   });
 
-
   // POST /:id/control — Execute a sequence of browser actions on a profile
   r.post(
     "/:id/control",
@@ -166,7 +155,11 @@ export function registerBrowserRoutes(app: FastifyInstance) {
       const { id } = req.params as { id: string };
       const body = req.body as RunStepsBody;
       try {
-        const result = await runBatchSteps({ ...body, profileId: id });
+        // Build base URL from request headers (Caddy/reverse-proxy forwards these)
+        const protocol = req.headers["x-forwarded-proto"] ?? "http";
+        const host = req.headers.host ?? "localhost";
+        const baseUrl = `${protocol}://${host}`;
+        const result = await runBatchSteps({ ...body, profileId: id, baseUrl });
         return reply.send(result);
       } catch (err: any) {
         return reply.code(400).send({ error: "bad_request", message: err.message });

@@ -15,19 +15,10 @@
  */
 
 import { spawn } from "node:child_process";
-import {
-  existsSync,
-  readFileSync,
-  writeFileSync,
-  appendFileSync,
-  unlinkSync,
-  mkdirSync,
-  openSync,
-  closeSync,
-} from "node:fs";
-import { join, dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -40,10 +31,7 @@ const DEFAULT_DATA_DIR = join(os.homedir(), ".agent-hands");
 
 // ─── Parse CLI ─────────────────────────────────────────────────────────────────
 const rawArgs = process.argv.slice(2);
-const COMMANDS = [
-  "start", "stop", "status", "restart", "logs",
-  "version", "init", "mcp", "help", "_monitor",
-];
+const COMMANDS = ["start", "stop", "status", "restart", "logs", "version", "init", "mcp", "uninstall", "help", "_monitor"];
 const command = COMMANDS.includes(rawArgs[0]) ? rawArgs.shift() : "help";
 
 function parseFlags(args) {
@@ -62,9 +50,29 @@ function parseFlags(args) {
 }
 
 const flags = parseFlags(rawArgs);
-const dataDir = flags["data-dir"] ?? process.env.DATA_DIR ?? DEFAULT_DATA_DIR;
-const port = Number(flags.port ?? DEFAULT_PORT);
-const host = flags.host ?? DEFAULT_HOST;
+
+// ─── Persisted config (saved on start, read by other commands) ──────────────
+const configFile = join(PKG_ROOT, ".agent-hands.conf");
+
+function loadSavedConfig() {
+  try {
+    if (existsSync(configFile)) {
+      return JSON.parse(readFileSync(configFile, "utf-8"));
+    }
+  } catch {}
+  return {};
+}
+
+function saveConfig(config) {
+  try {
+    writeFileSync(configFile, JSON.stringify(config, null, 2), "utf-8");
+  } catch {}
+}
+
+const savedConfig = loadSavedConfig();
+const dataDir = flags["data-dir"] ?? process.env.DATA_DIR ?? savedConfig.dataDir ?? DEFAULT_DATA_DIR;
+const port = Number(flags.port ?? savedConfig.port ?? DEFAULT_PORT);
+const host = flags.host ?? savedConfig.host ?? DEFAULT_HOST;
 
 // Ensure data dir exists
 mkdirSync(dataDir, { recursive: true });
@@ -90,7 +98,9 @@ function readPid() {
   const pid = Number(raw);
   if (Number.isNaN(pid)) return null;
   if (isProcessAlive(pid)) return pid;
-  try { unlinkSync(pidFile); } catch {}
+  try {
+    unlinkSync(pidFile);
+  } catch {}
   return null;
 }
 
@@ -99,7 +109,9 @@ function writePid(pid) {
 }
 
 function removePid() {
-  try { unlinkSync(pidFile); } catch {}
+  try {
+    unlinkSync(pidFile);
+  } catch {}
 }
 
 function getLocalVersion() {
@@ -125,6 +137,9 @@ async function cmdStart() {
     console.error("   Run 'bun run build:server' first.");
     process.exit(1);
   }
+
+  // Persist config so other commands auto-detect paths
+  saveConfig({ dataDir, port, host });
 
   // ── Foreground mode ──────────────────────────────────────────────────────
   if (flags.foreground) {
@@ -204,7 +219,9 @@ function cmdStop() {
 
   if (isProcessAlive(pid)) {
     console.log("   Force killing...");
-    try { process.kill(pid, "SIGKILL"); } catch {}
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {}
     Bun.sleepSync(300);
   }
 
@@ -283,6 +300,104 @@ async function cmdMcp() {
   await startMcpServer();
 }
 
+async function cmdUninstall() {
+  // 1. Stop server if running
+  const pid = readPid();
+  if (pid) {
+    console.log(`🛑 Stopping running server (PID: ${pid})...`);
+    cmdStop();
+  }
+
+  // 2. Detect paths
+  const installDir = PKG_ROOT;
+  const binLink = join(
+    process.env.BIN_DIR ?? (existsSync(join(os.homedir(), ".local/bin", "agent-hands")) ? join(os.homedir(), ".local/bin") : "/usr/local/bin"),
+    "agent-hands",
+  );
+
+  // Also try to find symlink by scanning common locations
+  const possibleBinDirs = [join(os.homedir(), ".local/bin"), join(os.homedir(), "bin"), "/usr/local/bin"];
+  const foundLinks = possibleBinDirs
+    .map((dir) => join(dir, "agent-hands"))
+    .filter((p) => {
+      try {
+        return existsSync(p) && readFileSync !== undefined;
+      } catch {
+        return false;
+      }
+    });
+
+  console.log("\n🗑️  Agent Hands — Uninstall\n");
+  console.log(`   Install dir : ${installDir}`);
+  console.log(`   Data dir    : ${dataDir}`);
+  if (foundLinks.length > 0) {
+    console.log(`   Symlink(s)  : ${foundLinks.join(", ")}`);
+  }
+  console.log("");
+
+  // 3. Confirm
+  const readline = await import("node:readline");
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const ask = (q) => new Promise((res) => rl.question(q, res));
+
+  const answer = await ask("⚠️  This will remove Agent Hands and all data. Continue? [y/N] ");
+  rl.close();
+
+  if (answer.trim().toLowerCase() !== "y") {
+    console.log("\n❌ Uninstall cancelled.\n");
+    process.exit(0);
+  }
+
+  // 4. Remove symlink(s)
+  for (const link of foundLinks) {
+    try {
+      const { lstatSync, readlinkSync } = await import("node:fs");
+      const stat = lstatSync(link);
+      if (stat.isSymbolicLink()) {
+        const target = readlinkSync(link);
+        // Only remove if it points to our install
+        if (target.startsWith(installDir)) {
+          try {
+            unlinkSync(link);
+            console.log(`   ✅ Removed symlink: ${link}`);
+          } catch {
+            // Try with sudo-like approach
+            const { execSync } = await import("node:child_process");
+            try {
+              execSync(`sudo rm -f "${link}"`, { stdio: "inherit" });
+              console.log(`   ✅ Removed symlink: ${link} (sudo)`);
+            } catch {
+              console.log(`   ⚠️  Could not remove symlink: ${link} (remove manually)`);
+            }
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // 5. Remove install directory
+  try {
+    const { rmSync } = await import("node:fs");
+    rmSync(installDir, { recursive: true, force: true });
+    console.log(`   ✅ Removed install dir: ${installDir}`);
+  } catch (e) {
+    console.log(`   ⚠️  Could not remove install dir: ${installDir}`);
+    console.log(`       Remove manually: rm -rf "${installDir}"`);
+  }
+
+  // 6. Remove data directory
+  try {
+    const { rmSync } = await import("node:fs");
+    rmSync(dataDir, { recursive: true, force: true });
+    console.log(`   ✅ Removed data dir: ${dataDir}`);
+  } catch (e) {
+    console.log(`   ⚠️  Could not remove data dir: ${dataDir}`);
+    console.log(`       Remove manually: rm -rf "${dataDir}"`);
+  }
+
+  console.log("\n✅ Agent Hands has been uninstalled.\n");
+}
+
 function cmdHelp() {
   console.log(`
 🤖 Agent Hands — LLM-First Knowledge Base
@@ -299,6 +414,7 @@ COMMANDS:
   version      Show version
   init         Create super admin (first run)
   mcp          Start MCP server in stdio mode
+  uninstall    Remove Agent Hands and all data
   help         Show this help
 
 OPTIONS (start / restart):
@@ -318,6 +434,7 @@ EXAMPLES:
   agent-hands start --foreground
   agent-hands stop
   agent-hands mcp
+  agent-hands uninstall
   agent-hands logs --follow
 `);
 }
@@ -370,14 +487,36 @@ async function cmdMonitor() {
 
 // ─── Run ───────────────────────────────────────────────────────────────────────
 switch (command) {
-  case "start":    await cmdStart(); break;
-  case "stop":     cmdStop(); break;
-  case "status":   cmdStatus(); break;
-  case "restart":  await cmdRestart(); break;
-  case "logs":     await cmdLogs(); break;
-  case "version":  cmdVersion(); break;
-  case "init":     await cmdInit(); break;
-  case "mcp":      await cmdMcp(); break;
-  case "_monitor": await cmdMonitor(); break;
-  default:         cmdHelp();
+  case "start":
+    await cmdStart();
+    break;
+  case "stop":
+    cmdStop();
+    break;
+  case "status":
+    cmdStatus();
+    break;
+  case "restart":
+    await cmdRestart();
+    break;
+  case "logs":
+    await cmdLogs();
+    break;
+  case "version":
+    cmdVersion();
+    break;
+  case "init":
+    await cmdInit();
+    break;
+  case "mcp":
+    await cmdMcp();
+    break;
+  case "uninstall":
+    await cmdUninstall();
+    break;
+  case "_monitor":
+    await cmdMonitor();
+    break;
+  default:
+    cmdHelp();
 }

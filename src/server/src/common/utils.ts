@@ -3,16 +3,40 @@ import { customAlphabet } from "nanoid";
 const alpha = customAlphabet("0123456789abcdefghijklmnopqrstuvwxyz", 16);
 
 /** Generate a typed semantic ID */
-export function genId(prefix: "usr" | "doc" | "blk" | "db" | "row" | "file" | "key" | "var" | "dtb" | "dtr" | "col" | "prj" | "bkt" | "obj" | "sak" | "dbs" | "vpr" | "vns" | "mts" | "mtl" | "mtlg" | "dap" | "dal" | "llm" | "bpr"): string {
+export function genId(
+  prefix:
+    | "usr"
+    | "doc"
+    | "blk"
+    | "db"
+    | "row"
+    | "file"
+    | "key"
+    | "var"
+    | "dtb"
+    | "dtr"
+    | "col"
+    | "prj"
+    | "bkt"
+    | "obj"
+    | "sak"
+    | "dbs"
+    | "vpr"
+    | "vns"
+    | "mts"
+    | "mtl"
+    | "mtlg"
+    | "dap"
+    | "dal"
+    | "llm"
+    | "bpr",
+): string {
   return `${prefix}_${alpha()}`;
 }
 
 /** Generate an API key — ltk_ prefix + 32 chars */
 export function genApiKey(): string {
-  const body = customAlphabet(
-    "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
-    32,
-  )();
+  const body = customAlphabet("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", 32)();
   return `ltk_${body}`;
 }
 
@@ -32,4 +56,10 @@ export function paginate<T>(
     items,
     meta: { total, page, limit, hasMore: start + limit < total },
   };
+}
+
+/** Resolve the public base URL for the API server.
+ *  Uses API_BASE_URL env var (configured domain) or falls back to localhost. */
+export function getBaseUrl(): string {
+  return process.env.API_BASE_URL ?? `http://localhost:${process.env.PORT ?? 18080}`;
 }

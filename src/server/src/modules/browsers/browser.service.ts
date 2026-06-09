@@ -1,21 +1,21 @@
-import { existsSync, mkdirSync, rmSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
+import { join } from "node:path";
+import { binaryInfo, clearCache, ensureBinary, launchPersistentContext } from "cloakbrowser";
+import { and, eq, like, sql } from "drizzle-orm";
 import { getDb } from "../../common/db/client.js";
 import { browserProfiles, users } from "../../common/db/schema.js";
-import { eq, like, and, sql } from "drizzle-orm";
 import { genId } from "../../common/utils.js";
-import { launchPersistentContext, ensureBinary, clearCache, binaryInfo } from "cloakbrowser";
 import type {
+  ControlProfileBody,
   CreateProfileBody,
-  UpdateProfileBody,
+  FingerprintConfig,
   ListProfilesQuery,
   ProxyConfig,
-  FingerprintConfig,
-  ControlProfileBody,
   RunStepsBody,
-  Step,
   SelectorType,
+  Step,
+  UpdateProfileBody,
 } from "./browser.schema.js";
 
 // ── CloakBrowser integration ────────────────────────────────────────────────────
@@ -114,9 +114,7 @@ setInterval(async () => {
     }
   });
   for (const id of toStop) {
-    console.log(
-      `[browser-sweeper] Auto-stopping idle browser ${id}`,
-    );
+    console.log(`[browser-sweeper] Auto-stopping idle browser ${id}`);
     try {
       await stopBrowser(id);
     } catch (err) {
@@ -136,7 +134,7 @@ const SCREENSHOT_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
 // Ensure screenshots directory exists
 mkdirSync(SCREENSHOTS_DIR, { recursive: true });
 
-/** Save screenshot buffer to file, return path and URL */
+/** Save screenshot buffer to file, return path and relative URL */
 export function saveScreenshotToFile(buf: Buffer): { path: string; url: string; filename: string } {
   const random = Math.random().toString(36).substring(2, 8);
   const filename = `screenshot_${Date.now()}_${random}.png`;
@@ -155,32 +153,35 @@ export function getScreenshotsDir(): string {
 }
 
 // Screenshot cleanup sweeper — runs every 10 minutes, deletes files > 1 hour old
-setInterval(() => {
-  try {
-    if (!existsSync(SCREENSHOTS_DIR)) return;
-    const now = Date.now();
-    const files = readdirSync(SCREENSHOTS_DIR);
-    let cleaned = 0;
-    for (const file of files) {
-      if (!file.endsWith(".png")) continue;
-      const filepath = join(SCREENSHOTS_DIR, file);
-      try {
-        const stat = statSync(filepath);
-        if (now - stat.mtimeMs > SCREENSHOT_MAX_AGE_MS) {
-          unlinkSync(filepath);
-          cleaned++;
+setInterval(
+  () => {
+    try {
+      if (!existsSync(SCREENSHOTS_DIR)) return;
+      const now = Date.now();
+      const files = readdirSync(SCREENSHOTS_DIR);
+      let cleaned = 0;
+      for (const file of files) {
+        if (!file.endsWith(".png")) continue;
+        const filepath = join(SCREENSHOTS_DIR, file);
+        try {
+          const stat = statSync(filepath);
+          if (now - stat.mtimeMs > SCREENSHOT_MAX_AGE_MS) {
+            unlinkSync(filepath);
+            cleaned++;
+          }
+        } catch {
+          // Ignore individual file errors
         }
-      } catch {
-        // Ignore individual file errors
       }
+      if (cleaned > 0) {
+        console.log(`[screenshot-sweeper] Cleaned up ${cleaned} expired screenshot(s)`);
+      }
+    } catch (err) {
+      console.error("[screenshot-sweeper] Error during cleanup:", err);
     }
-    if (cleaned > 0) {
-      console.log(`[screenshot-sweeper] Cleaned up ${cleaned} expired screenshot(s)`);
-    }
-  } catch (err) {
-    console.error("[screenshot-sweeper] Error during cleanup:", err);
-  }
-}, 10 * 60 * 1000); // Every 10 minutes
+  },
+  10 * 60 * 1000,
+); // Every 10 minutes
 
 /** Find an available random port for CDP debugging */
 async function getFreePort(): Promise<number> {
@@ -188,7 +189,7 @@ async function getFreePort(): Promise<number> {
     const server = createServer();
     server.listen(0, "127.0.0.1", () => {
       const address = server.address();
-      const port = typeof address === "string" ? 0 : address?.port ?? 0;
+      const port = typeof address === "string" ? 0 : (address?.port ?? 0);
       server.close(() => {
         if (port) resolve(port);
         else reject(new Error("Failed to allocate dynamic port"));
@@ -262,13 +263,7 @@ export async function listBrowserProfiles(query: ListProfilesQuery, userId?: str
     whereClause = whereClause ? and(whereClause, searchFilter) : searchFilter;
   }
 
-  const items = db
-    .select()
-    .from(browserProfiles)
-    .where(whereClause)
-    .limit(limit)
-    .offset(offset)
-    .all();
+  const items = db.select().from(browserProfiles).where(whereClause).limit(limit).offset(offset).all();
 
   // Enrich running profiles with runtime stats (tab count + memory)
   const enrichedItems = items.map((item) => {
@@ -280,11 +275,7 @@ export async function listBrowserProfiles(query: ListProfilesQuery, userId?: str
     };
   });
 
-  const countRes = db
-    .select({ count: sql<number>`COUNT(*)` })
-    .from(browserProfiles)
-    .where(whereClause)
-    .get();
+  const countRes = db.select({ count: sql<number>`COUNT(*)` }).from(browserProfiles).where(whereClause).get();
 
   const total = countRes?.count ?? 0;
 
@@ -416,10 +407,7 @@ export async function startBrowser(id: string) {
   const proxy: ProxyConfig | null = profile.proxyConfig ? JSON.parse(profile.proxyConfig) : null;
   const fingerprint: FingerprintConfig | null = profile.fingerprintConfig ? JSON.parse(profile.fingerprintConfig) : null;
 
-  const args = [
-    `--remote-debugging-port=${cdpPort}`,
-    `--remote-debugging-address=127.0.0.1`,
-  ];
+  const args = [`--remote-debugging-port=${cdpPort}`, `--remote-debugging-address=127.0.0.1`];
 
   // Build CloakBrowser launch options
   const launchOptions: any = {
@@ -793,33 +781,35 @@ async function executeStep(page: any, step: Step, stepTimeout: number): Promise<
     case "get_interactive_elements": {
       const elements = await page.evaluate(() => {
         const interactable = document.querySelectorAll(
-          'a[href], button, input, select, textarea, [role="button"], [role="link"], [role="checkbox"], [role="radio"], [role="tab"], [role="menuitem"], [onclick], [tabindex]:not([tabindex="-1"])'
+          'a[href], button, input, select, textarea, [role="button"], [role="link"], [role="checkbox"], [role="radio"], [role="tab"], [role="menuitem"], [onclick], [tabindex]:not([tabindex="-1"])',
         );
-        return Array.from(interactable).slice(0, 100).map((el, i) => {
-          const rect = el.getBoundingClientRect();
-          const isVisible = rect.height > 0 && rect.width > 0;
-          const tag = el.tagName.toLowerCase();
-          // Build a reliable CSS selector
-          let cssSelector = tag;
-          if (el.id) cssSelector = `#${el.id}`;
-          else if (el.getAttribute("name")) cssSelector = `${tag}[name="${el.getAttribute("name")}"]`;
-          else if (el.getAttribute("data-testid")) cssSelector = `[data-testid="${el.getAttribute("data-testid")}"]`;
+        return Array.from(interactable)
+          .slice(0, 100)
+          .map((el, i) => {
+            const rect = el.getBoundingClientRect();
+            const isVisible = rect.height > 0 && rect.width > 0;
+            const tag = el.tagName.toLowerCase();
+            // Build a reliable CSS selector
+            let cssSelector = tag;
+            if (el.id) cssSelector = `#${el.id}`;
+            else if (el.getAttribute("name")) cssSelector = `${tag}[name="${el.getAttribute("name")}"]`;
+            else if (el.getAttribute("data-testid")) cssSelector = `[data-testid="${el.getAttribute("data-testid")}"]`;
 
-          return {
-            index: i,
-            tag,
-            type: el.getAttribute("type"),
-            role: el.getAttribute("role"),
-            text: (el.textContent || "").trim().substring(0, 80) || null,
-            placeholder: el.getAttribute("placeholder"),
-            ariaLabel: el.getAttribute("aria-label"),
-            name: el.getAttribute("name"),
-            id: el.id || null,
-            href: el.getAttribute("href"),
-            selector: cssSelector,
-            visible: isVisible,
-          };
-        });
+            return {
+              index: i,
+              tag,
+              type: el.getAttribute("type"),
+              role: el.getAttribute("role"),
+              text: (el.textContent || "").trim().substring(0, 80) || null,
+              placeholder: el.getAttribute("placeholder"),
+              ariaLabel: el.getAttribute("aria-label"),
+              name: el.getAttribute("name"),
+              id: el.id || null,
+              href: el.getAttribute("href"),
+              selector: cssSelector,
+              visible: isVisible,
+            };
+          });
       });
       return { count: elements.length, elements: elements.filter((e: any) => e.visible) };
     }
@@ -842,23 +832,38 @@ async function getPageState(page: any): Promise<any> {
   return {
     url: page.url(),
     title: await page.title().catch(() => ""),
-    focusedElement: await page.evaluate(() => {
-      const el = document.activeElement;
-      if (!el || el === document.body) return null;
-      return {
-        tag: el.tagName.toLowerCase(),
-        id: el.id || null,
-        name: el.getAttribute("name"),
-        type: el.getAttribute("type"),
-      };
-    }).catch(() => null),
+    focusedElement: await page
+      .evaluate(() => {
+        const el = document.activeElement;
+        if (!el || el === document.body) return null;
+        return {
+          tag: el.tagName.toLowerCase(),
+          id: el.id || null,
+          name: el.getAttribute("name"),
+          type: el.getAttribute("type"),
+        };
+      })
+      .catch(() => null),
   };
 }
 
 // ── Batch Step Runner ───────────────────────────────────────────────────────────
 
-export async function runBatchSteps(body: RunStepsBody) {
-  const { profileId, tabIndex, steps, continueOnError, includePageState } = body;
+/**
+ * Post-process batch results: prefix screenshot relative URLs with baseUrl.
+ * This ensures screenshot URLs are fully qualified (e.g. https://domain.com/api/...).
+ */
+function prefixScreenshotUrls(results: any[], baseUrl?: string): void {
+  if (!baseUrl) return;
+  for (const r of results) {
+    if (r.success && r.action === "screenshot" && r.result?.url?.startsWith("/")) {
+      r.result.url = `${baseUrl.replace(/\/$/, "")}${r.result.url}`;
+    }
+  }
+}
+
+export async function runBatchSteps(body: RunStepsBody & { baseUrl?: string }) {
+  const { profileId, tabIndex, steps, continueOnError, includePageState, baseUrl } = body;
   const defaultTimeout = 10000;
 
   if (profileId) {
@@ -883,9 +888,7 @@ export async function runBatchSteps(body: RunStepsBody) {
         throw new Error("Browser has no open tabs. Omit tabIndex to create a new tab.");
       }
       if (tabIndex >= pages.length) {
-        throw new Error(
-          `Tab index ${tabIndex} is out of bounds (open tabs: ${pages.length}, valid range: 0–${pages.length - 1})`
-        );
+        throw new Error(`Tab index ${tabIndex} is out of bounds (open tabs: ${pages.length}, valid range: 0–${pages.length - 1})`);
       }
       page = pages[tabIndex];
     } else {
@@ -920,6 +923,7 @@ export async function runBatchSteps(body: RunStepsBody) {
           if (!continueOnError) break;
         }
       }
+      prefixScreenshotUrls(results, baseUrl);
       return { profileId, persistent: true, tabIndex: usedTabIndex, results };
     } finally {
       // Only close the tab if WE created it (new tab mode)
@@ -934,10 +938,7 @@ export async function runBatchSteps(body: RunStepsBody) {
     mkdirSync(tempDir, { recursive: true });
 
     const cdpPort = await getFreePort();
-    const args = [
-      `--remote-debugging-port=${cdpPort}`,
-      `--remote-debugging-address=127.0.0.1`,
-    ];
+    const args = [`--remote-debugging-port=${cdpPort}`, `--remote-debugging-address=127.0.0.1`];
     const launchOptions: any = {
       headless: true,
       args,
@@ -965,6 +966,7 @@ export async function runBatchSteps(body: RunStepsBody) {
           if (!continueOnError) break;
         }
       }
+      prefixScreenshotUrls(results, baseUrl);
       return { profileId: null, persistent: false, results };
     } finally {
       // Shutdown completely and delete temporary directory
