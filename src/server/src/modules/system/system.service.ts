@@ -177,7 +177,7 @@ export async function getVersionInfo(): Promise<VersionResponse> {
   let installCommand: string | null = null;
   if (hasUpdate && latest) {
     if (isPreRelease) {
-      installCommand = `export VERSION=${latest} && curl -fsSL ${installUrl} | bash`;
+      installCommand = `curl -fsSL ${installUrl} | bash -s -- ${latest}`;
     } else {
       installCommand = `curl -fsSL ${installUrl} | bash`;
     }

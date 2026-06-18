@@ -5,11 +5,33 @@
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/phamvanquyit/agent-hands/main/install.sh | bash
 #
-# Options (environment variables — use export before piping):
-#   export VERSION=0.3.0 && curl ... | bash    Install a specific version
+# Install a specific version:
+#   curl -fsSL ... | bash -s -- 1.0.1
+#   curl -fsSL ... | bash -s -- --version 1.0.1
+#
+# Options (environment variables):
 #   INSTALL_DIR=...    Custom install directory (default: ~/.local/share/agent-hands)
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
+
+# ── Parse arguments ─────────────────────────────────────────────────────────
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --version|-v)
+      VERSION="$2"
+      shift 2
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+    *)
+      # Positional argument = version
+      VERSION="$1"
+      shift
+      ;;
+  esac
+done
 
 # Di chuyển về thư mục tạm an toàn để tránh lỗi cwd bị xóa
 cd /tmp || cd "$HOME" || cd /
