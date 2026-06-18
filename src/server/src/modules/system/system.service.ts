@@ -171,51 +171,22 @@ export async function getVersionInfo(): Promise<VersionResponse> {
 
   const hasUpdate = latest != null && isNewer(current, latest);
   const isPreRelease = latest != null && latest.includes("-");
-  return { current, latest, hasUpdate, channel, isPreRelease, checkedAt: Date.now() };
-}
 
-/**
- * Performs the actual update:
- * 1. Runs the install.sh script from GitHub (same as initial install)
- * 2. Exits with code 1 → monitor process auto-restarts with the new binary
- */
-export async function performUpdate(): Promise<{ ok: boolean; message: string }> {
-  try {
-    const channel = await getUpdateChannel();
-    const installUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/install.sh`;
-
-    // If on dev channel, pass the specific pre-release version to install
-    const envVars: Record<string, string> = { ...process.env } as Record<string, string>;
-    if (channel === "dev") {
-      const latest = await checkLatestPreRelease();
-      if (latest) {
-        envVars.VERSION = latest;
-      }
+  // Build the install command the user should run manually
+  const installUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/install.sh`;
+  let installCommand: string | null = null;
+  if (hasUpdate && latest) {
+    if (isPreRelease) {
+      installCommand = `export VERSION=${latest} && curl -fsSL ${installUrl} | bash`;
+    } else {
+      installCommand = `curl -fsSL ${installUrl} | bash`;
     }
-
-    const proc = Bun.spawn(["bash", "-c", `curl -fsSL ${installUrl} | bash`], {
-      stdout: "inherit",
-      stderr: "inherit",
-      env: envVars,
-    });
-
-    const exitCode = await proc.exited;
-    if (exitCode !== 0) {
-      return { ok: false, message: `Install script failed with exit code ${exitCode}` };
-    }
-
-    // Schedule restart after response is sent (500ms delay)
-    setTimeout(() => {
-      console.log("[System] Update installed — restarting server...");
-      process.exit(1); // monitor will restart with new binary
-    }, 500);
-
-    return { ok: true, message: "Update installed. Server will restart shortly." };
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { ok: false, message };
   }
+
+  return { current, latest, hasUpdate, channel, isPreRelease, installCommand, checkedAt: Date.now() };
 }
+
+
 
 /** Invalidate version cache (force re-check) */
 export function invalidateVersionCache() {

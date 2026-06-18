@@ -394,6 +394,9 @@ export interface McpToolServerItem {
   description: string | null;
   type: "builtin" | "custom";
   isActive: number;
+  extendsBuiltin: string[];
+  apiKeyPrefix: string | null;
+  apiKey?: string; // raw key — only present immediately after create/regenerate
   createdAt: number;
   updatedAt: number;
   toolCount: number;
@@ -402,12 +405,14 @@ export interface McpToolServerItem {
 export interface CreateMcpServerInput {
   name: string;
   description?: string;
+  extendsBuiltin?: string[];
 }
 
 export interface UpdateMcpServerInput {
   name?: string;
   description?: string | null;
   isActive?: boolean;
+  extendsBuiltin?: string[];
 }
 
 // ── MCP Tools ───────────────────────────────────────────────────────────────

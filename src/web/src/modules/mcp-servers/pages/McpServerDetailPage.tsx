@@ -11,7 +11,7 @@ import { useServerDetail } from "../hooks/useServerDetail";
 // ══════════════════════════════════════════════════════════════════════════════
 
 export default function McpServerDetailPage() {
-  const { id, server, tools, loading, isBuiltin, handleToggleTool, handleCreateTool, handleEditServer, handleDeleteServer, handleDeleteTool, navigate } =
+  const { id, server, tools, loading, isBuiltin, revealedApiKey, handleToggleTool, handleCreateTool, handleEditServer, handleToggleSystemTool, handleDeleteServer, handleDeleteTool, handleRegenerateKey, handleRevokeKey, navigate } =
     useServerDetail();
 
   const [activeTab, setActiveTab] = useState<"tools" | "config">("tools");
@@ -140,14 +140,23 @@ export default function McpServerDetailPage() {
           <ToolsTab
             id={id!}
             isBuiltin={isBuiltin}
+            server={server}
             tools={tools}
             onToggle={handleToggleTool}
             onDeleteTool={handleDeleteTool}
             onNewTool={() => setNewToolOpen(true)}
+            onToggleSystemTool={handleToggleSystemTool}
             navigate={navigate}
           />
         ) : (
-          <ConfigTab mcpEndpoint={mcpEndpoint} serverName={server.name} />
+          <ConfigTab
+            mcpEndpoint={mcpEndpoint}
+            serverName={server.name}
+            apiKeyPrefix={server.apiKeyPrefix}
+            revealedApiKey={revealedApiKey}
+            onRegenerateKey={handleRegenerateKey}
+            onRevokeKey={handleRevokeKey}
+          />
         )}
       </div>
 

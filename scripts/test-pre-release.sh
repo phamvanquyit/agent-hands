@@ -568,38 +568,36 @@ rm -rf "$STAGING_DIR"
 phase_end
 
 # ════════════════════════════════════════════════════════════════════════════
-# PHASE 6: Docker Install Tests (requires Docker)
+# PHASE 6: Container Install Tests (Apple container CLI)
 # ════════════════════════════════════════════════════════════════════════════
-phase "Phase 6: Docker Install Tests"
+phase "Phase 6: Container Install Tests"
 
-# Find Docker
-DOCKER=""
+# Find Apple container CLI
+CONTAINER_CLI=""
 for candidate in \
-  "$(command -v docker 2>/dev/null || true)" \
-  "/usr/local/bin/docker" \
-  "/opt/homebrew/bin/docker" \
-  "/Applications/Docker.app/Contents/Resources/bin/docker" \
-  "/Applications/OrbStack.app/Contents/MacOS/xbin/docker"
+  "$(command -v container 2>/dev/null || true)" \
+  "/opt/homebrew/bin/container" \
+  "/usr/local/bin/container"
 do
-  if [ -n "$candidate" ] && [ -x "$candidate" ] && "$candidate" version &>/dev/null; then
-    DOCKER="$candidate"
+  if [ -n "$candidate" ] && [ -x "$candidate" ] && "$candidate" --version &>/dev/null; then
+    CONTAINER_CLI="$candidate"
     break
   fi
 done
 
-if [ -z "$DOCKER" ]; then
-  skip_test "Docker install tests — Docker not available"
+if [ -z "$CONTAINER_CLI" ]; then
+  skip_test "Container install tests — Apple container CLI not available (brew install container)"
   phase_end
 else
-  info "Using Docker: $DOCKER"
+  info "Using Apple container CLI: $($CONTAINER_CLI --version 2>&1)"
 
   step "Preparing test artifacts"
 
-  DOCKER_TMP=$(mktemp -d)
-  trap "rm -rf '$DOCKER_TMP'; cleanup_all" EXIT
+  CONTAINER_TMP=$(mktemp -d)
+  trap "rm -rf '$CONTAINER_TMP'; cleanup_all" EXIT
 
   # ── Create test tarball ──────────────────────────────────────────────
-  STAGING="$DOCKER_TMP/agent-hands"
+  STAGING="$CONTAINER_TMP/agent-hands"
   mkdir -p "$STAGING/bin" "$STAGING/dist" "$STAGING/public"
 
   # Minimal CLI (functional with bun)
@@ -642,18 +640,18 @@ CLI_EOF
 PKG
   echo "// server entry (test)" > "$STAGING/dist/index.js"
 
-  TARBALL_PATH="$DOCKER_TMP/agent-hands-1.0.0.tar.gz"
-  (cd "$DOCKER_TMP" && COPYFILE_DISABLE=1 tar -czf "$TARBALL_PATH" agent-hands)
+  TARBALL_PATH="$CONTAINER_TMP/agent-hands-1.0.0.tar.gz"
+  (cd "$CONTAINER_TMP" && COPYFILE_DISABLE=1 tar -czf "$TARBALL_PATH" agent-hands)
 
   # ── Prepare HTTP server files ────────────────────────────────────────
-  HTTP_DIR="$DOCKER_TMP/http"
+  HTTP_DIR="$CONTAINER_TMP/http"
   mkdir -p "$HTTP_DIR/repos/phamvanquyit/agent-hands/releases"
   echo '{"tag_name": "v1.0.0"}' > "$HTTP_DIR/repos/phamvanquyit/agent-hands/releases/latest"
   mkdir -p "$HTTP_DIR/phamvanquyit/agent-hands/releases/download/v1.0.0"
   cp "$TARBALL_PATH" "$HTTP_DIR/phamvanquyit/agent-hands/releases/download/v1.0.0/"
 
-  # ── Create Dockerfile inline ─────────────────────────────────────────
-  cat > "$DOCKER_TMP/Dockerfile" << 'DOCKERFILE'
+  # ── Create Containerfile (Dockerfile) ────────────────────────────────
+  cat > "$CONTAINER_TMP/Dockerfile" << 'DOCKERFILE'
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates sudo python3 unzip \
@@ -674,7 +672,7 @@ ENTRYPOINT ["/test/run-tests.sh"]
 DOCKERFILE
 
   # ── Create test runner script ────────────────────────────────────────
-  cat > "$DOCKER_TMP/run-tests.sh" << 'RUNNER_EOF'
+  cat > "$CONTAINER_TMP/run-tests.sh" << 'RUNNER_EOF'
 #!/bin/bash
 set -uo pipefail
 RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
@@ -699,7 +697,7 @@ cleanup() {
   rm -f "$HOME/.local/bin/agent-hands" "$HOME/bin/agent-hands" 2>/dev/null
 }
 
-echo -e "\n${BOLD}🐳 Docker Install Tests${NC}"
+echo -e "\n${BOLD}📦 Container Install Tests${NC}"
 start_http
 trap 'stop_http' EXIT
 
@@ -779,63 +777,51 @@ cleanup
 # ── Summary ────────────────────────────────────────────────
 echo ""
 echo -e "${DIM}─────────────────────────────────────────────────────${NC}"
-echo -e "${BOLD}Docker Results:${NC} ${GREEN}${TP} passed${NC}, ${RED}${TF} failed${NC}, ${TT} total"
+echo -e "${BOLD}Container Results:${NC} ${GREEN}${TP} passed${NC}, ${RED}${TF} failed${NC}, ${TT} total"
 echo ""
 if [ "$TF" -gt 0 ]; then exit 1; else exit 0; fi
 RUNNER_EOF
 
   # ── Build & Run ──────────────────────────────────────────────────────
-  # Bypass docker-credential-osxkeychain issue by using a clean config
-  DOCKER_CFG_TMP=$(mktemp -d)
-  echo '{}' > "$DOCKER_CFG_TMP/config.json"
-  export DOCKER_CONFIG="$DOCKER_CFG_TMP"
-
-  # Auto-detect Docker socket (DOCKER_CONFIG wipe loses context)
-  if [ -z "${DOCKER_HOST:-}" ]; then
-    for sock in "$HOME/.docker/run/docker.sock" "/var/run/docker.sock"; do
-      if [ -S "$sock" ]; then
-        export DOCKER_HOST="unix://$sock"
-        break
-      fi
-    done
-  fi
-
-  step "Building Docker image"
+  step "Building container image"
   IMAGE_NAME="agent-hands-prerelease-test"
-  DOCKER_BUILD_OK=false
-  DOCKER_BUILD_OUT=$($DOCKER build -t "$IMAGE_NAME" -f "$DOCKER_TMP/Dockerfile" "$DOCKER_TMP" --quiet 2>&1)
+  CONTAINER_BUILD_OK=false
+  CONTAINER_BUILD_LOG=$(mktemp)
+  $CONTAINER_CLI build -t "$IMAGE_NAME" -f "$CONTAINER_TMP/Dockerfile" "$CONTAINER_TMP" > "$CONTAINER_BUILD_LOG" 2>&1
   if [ $? -eq 0 ]; then
-    pass_test "Docker image built"
-    DOCKER_BUILD_OK=true
+    pass_test "Container image built"
+    CONTAINER_BUILD_OK=true
   else
-    skip_test "Docker image build — Docker not ready (start Docker Desktop and retry)"
-    info "$DOCKER_BUILD_OUT"
+    skip_test "Container image build — container system not ready (run: container system start)"
+    info "$(cat "$CONTAINER_BUILD_LOG")"
   fi
+  rm -f "$CONTAINER_BUILD_LOG"
 
-  if [ "$DOCKER_BUILD_OK" = true ]; then
+  if [ "$CONTAINER_BUILD_OK" = true ]; then
     step "Running install tests in container"
-    DOCKER_OUTPUT=$($DOCKER run --rm \
+    CONTAINER_RUN_LOG=$(mktemp)
+    $CONTAINER_CLI run --rm \
       -v "$ROOT_DIR/install.sh:/test/install.sh:ro" \
       -v "$HTTP_DIR:/test/http:ro" \
-      "$IMAGE_NAME" 2>&1)
-    DOCKER_EXIT=$?
+      "$IMAGE_NAME" > "$CONTAINER_RUN_LOG" 2>&1
+    CONTAINER_EXIT=$?
 
-    echo "$DOCKER_OUTPUT"
+    cat "$CONTAINER_RUN_LOG"
+    rm -f "$CONTAINER_RUN_LOG"
 
-    if [ "$DOCKER_EXIT" -eq 0 ]; then
-      pass_test "Docker install tests — all passed"
+    if [ "$CONTAINER_EXIT" -eq 0 ]; then
+      pass_test "Container install tests — all passed"
     else
-      fail_test "Docker install tests — some failed"
+      fail_test "Container install tests — some failed"
     fi
 
-    $DOCKER rmi "$IMAGE_NAME" &>/dev/null || true
+    $CONTAINER_CLI image rm "$IMAGE_NAME" &>/dev/null || true
   else
-    skip_test "Docker install tests — skipped (build failed)"
+    skip_test "Container install tests — skipped (build failed)"
   fi
 
   # Cleanup
-  rm -rf "$DOCKER_TMP" "$DOCKER_CFG_TMP"
-  unset DOCKER_CONFIG
+  rm -rf "$CONTAINER_TMP"
 
   phase_end
 fi

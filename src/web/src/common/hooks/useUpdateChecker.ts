@@ -6,8 +6,6 @@ const CHECK_INTERVAL_MS = 60_000; // 1 minute
 
 interface UpdateCheckerState {
   versionInfo: VersionInfo | null;
-  isUpdating: boolean;
-  updateError: string | null;
   dismissedVersion: string | null;
   channelLoading: boolean;
 }
@@ -15,8 +13,6 @@ interface UpdateCheckerState {
 export function useUpdateChecker() {
   const [state, setState] = useState<UpdateCheckerState>({
     versionInfo: null,
-    isUpdating: false,
-    updateError: null,
     dismissedVersion: null,
     channelLoading: false,
   });
@@ -48,22 +44,6 @@ export function useUpdateChecker() {
     setState((prev) => ({ ...prev, dismissedVersion: version }));
   }, []);
 
-  const triggerUpdate = useCallback(async () => {
-    setState((prev) => ({ ...prev, isUpdating: true, updateError: null }));
-    try {
-      await client.system.triggerUpdate();
-      // Server will restart — show a "restarting" message
-      setState((prev) => ({
-        ...prev,
-        isUpdating: false,
-        updateError: null,
-      }));
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Update failed";
-      setState((prev) => ({ ...prev, isUpdating: false, updateError: message }));
-    }
-  }, []);
-
   const toggleChannel = useCallback(async (enabled: boolean) => {
     const newChannel = enabled ? "dev" : "stable";
     setState((prev) => ({ ...prev, channelLoading: true }));
@@ -87,11 +67,8 @@ export function useUpdateChecker() {
   return {
     versionInfo: state.versionInfo,
     showBanner,
-    isUpdating: state.isUpdating,
-    updateError: state.updateError,
     channelLoading: state.channelLoading,
     dismiss,
-    triggerUpdate,
     toggleChannel,
   };
 }

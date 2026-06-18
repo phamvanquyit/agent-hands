@@ -33,18 +33,16 @@ export default function LlmProvidersPage() {
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
   const [viewModelsProvider, setViewModelsProvider] = useState<LlmProviderItem | null>(null);
 
-  const fetchProviders = async () => {
-    try {
-      setProviders(await client.llmProviders.list());
-    } catch {
-      message.error("Failed to load LLM providers");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
+    const fetchProviders = async () => {
+      try {
+        setProviders(await client.llmProviders.list());
+      } catch {
+        message.error("Failed to load LLM providers");
+      } finally {
+        setLoading(false);
+      }
+    };
     fetchProviders();
   }, []);
 

@@ -18,7 +18,7 @@ export default function DashboardPage() {
   const user = useAuthStore((s) => s.user);
   const navigate = useNavigate();
   const greeting = getGreeting();
-  const { versionInfo, showBanner, isUpdating, updateError, dismiss, triggerUpdate, toggleChannel, channelLoading } = useUpdateChecker();
+  const { versionInfo, showBanner, dismiss, toggleChannel, channelLoading } = useUpdateChecker();
   const isDevChannel = versionInfo?.channel === "dev";
 
   return (
@@ -45,9 +45,6 @@ export default function DashboardPage() {
         <div className="mb-6">
           <UpdateBanner
             versionInfo={versionInfo}
-            isUpdating={isUpdating}
-            updateError={updateError}
-            onUpdate={triggerUpdate}
             onDismiss={() => dismiss(versionInfo.latest!)}
           />
         </div>

@@ -29,6 +29,8 @@ import m0021 from "./0021_mcp_tools_draft_code.js";
 import m0022 from "./0022_rebrand_agent_hands.js";
 import m0023 from "./0023_dynamic_apis_draft_code.js";
 import m0024 from "./0024_browser_profiles.js";
+import m0025 from "./0025_mcp_server_api_keys.js";
+import m0026 from "./0026_mcp_servers_extends_builtin.js";
 
 import type { Migration } from "../migrate.js";
 
@@ -57,5 +59,7 @@ export const migrations: Migration[] = [
   m0022,
   m0023,
   m0024,
+  m0025,
+  m0026,
 ];
 

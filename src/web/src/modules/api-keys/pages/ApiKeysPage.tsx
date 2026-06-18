@@ -13,17 +13,16 @@ export default function ApiKeysPage() {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [createdKey, setCreatedKey] = useState<ApiKeyCreated | null>(null);
 
-  const fetchKeys = async () => {
-    try {
-      setKeys(await client.apiKeys.list());
-    } catch {
-      message.error("Failed to load API keys");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
+    const fetchKeys = async () => {
+      try {
+        setKeys(await client.apiKeys.list());
+      } catch {
+        message.error("Failed to load API keys");
+      } finally {
+        setLoading(false);
+      }
+    };
     fetchKeys();
   }, []);
 

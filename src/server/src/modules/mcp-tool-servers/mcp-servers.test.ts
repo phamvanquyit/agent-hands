@@ -20,6 +20,7 @@ const PASSWORD = process.env.TEST_PASSWORD ?? "admin123";
 let accessToken = "";
 let createdServerId = "";
 let createdToolId = "";
+let createdServerApiKey = "";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -86,7 +87,7 @@ describe("MCP Tool Servers — Server CRUD", () => {
     expect(Array.isArray(data.items)).toBe(true);
   });
 
-  test("POST /mcp-tool-servers — create custom server", async () => {
+  test("POST /mcp-tool-servers — create custom server (with API key)", async () => {
     const res = await apiPost("/mcp-tool-servers", {
       name: "test-mcp-server",
       description: "Test MCP server for integration tests",
@@ -97,8 +98,13 @@ describe("MCP Tool Servers — Server CRUD", () => {
     expect(data.id).toBeTruthy();
     expect(data.name).toBe("test-mcp-server");
     expect(data.type).toBe("custom");
+    // Verify API key is auto-generated
+    expect(data.apiKey).toBeTruthy();
+    expect(data.apiKey.startsWith("msk_")).toBe(true);
+    expect(data.apiKeyPrefix).toBeTruthy();
 
     createdServerId = data.id;
+    createdServerApiKey = data.apiKey;
   });
 
   test("GET /mcp-tool-servers/:id — get server by id", async () => {
@@ -121,6 +127,25 @@ describe("MCP Tool Servers — Server CRUD", () => {
     expect(res.status).toBe(200);
     const data = await json(res);
     expect(data.description).toBe("Updated description");
+  });
+
+  test("PATCH /mcp-tool-servers/:id — update extendsBuiltin tools list", async () => {
+    const res = await apiPatch(`/mcp-tool-servers/${createdServerId}`, {
+      extendsBuiltin: ["kv_get", "kv_list"],
+    });
+    expect(res.status).toBe(200);
+    const data = await json(res);
+    expect(Array.isArray(data.extendsBuiltin)).toBe(true);
+    expect(data.extendsBuiltin).toContain("kv_get");
+    expect(data.extendsBuiltin).toContain("kv_list");
+  });
+
+  test("GET /mcp-tool-servers/:id — verify extendsBuiltin is persisted", async () => {
+    const res = await apiGet(`/mcp-tool-servers/${createdServerId}`);
+    expect(res.status).toBe(200);
+    const data = await json(res);
+    expect(data.extendsBuiltin).toContain("kv_get");
+    expect(data.extendsBuiltin).toContain("kv_list");
   });
 });
 
@@ -255,3 +280,150 @@ describe("MCP Tool Servers — Auth", () => {
     expect(res.status).toBe(401);
   });
 });
+
+// ── API Key Management ───────────────────────────────────────────────────────
+
+describe("MCP Tool Servers — API Key Management", () => {
+  let keyTestServerId = "";
+  let keyTestApiKey = "";
+
+  beforeAll(async () => {
+    // Create a server for key tests
+    const res = await apiPost("/mcp-tool-servers", {
+      name: "key-test-server",
+      description: "Server for API key tests",
+    });
+    const data = await json(res);
+    keyTestServerId = data.id;
+    keyTestApiKey = data.apiKey;
+  });
+
+  afterAll(async () => {
+    if (keyTestServerId) {
+      await apiDelete(`/mcp-tool-servers/${keyTestServerId}`);
+    }
+  });
+
+  test("GET server — apiKeyPrefix present, no apiKeyHash", async () => {
+    const res = await apiGet(`/mcp-tool-servers/${keyTestServerId}`);
+    expect(res.status).toBe(200);
+    const data = await json(res);
+    expect(data.apiKeyPrefix).toBeTruthy();
+    expect(data.apiKeyPrefix.startsWith("msk_")).toBe(true);
+    // Hash should NOT be exposed in API response
+    expect(data.apiKeyHash).toBeUndefined();
+  });
+
+  test("POST /:id/regenerate-key — regenerate key", async () => {
+    const res = await apiPost(`/mcp-tool-servers/${keyTestServerId}/regenerate-key`, {});
+    expect(res.status).toBe(200);
+    const data = await json(res);
+    expect(data.apiKey).toBeTruthy();
+    expect(data.apiKey.startsWith("msk_")).toBe(true);
+    expect(data.apiKeyPrefix).toBeTruthy();
+    // Key should be different from original
+    expect(data.apiKey).not.toBe(keyTestApiKey);
+    keyTestApiKey = data.apiKey; // update for later tests
+  });
+
+  test("MCP endpoint — auth with server key (Bearer msk_)", async () => {
+    // POST /api/mcp/:serverId with MCP server key
+    // This should succeed auth (though the actual MCP initialize may fail, auth itself should pass)
+    const res = await fetch(`${BASE_URL}/api/mcp/${keyTestServerId}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${keyTestApiKey}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-03-26",
+          capabilities: {},
+          clientInfo: { name: "test", version: "1.0" },
+        },
+      }),
+    });
+    // Should not be 401 (auth passed)
+    expect(res.status).not.toBe(401);
+  });
+
+  test("MCP endpoint — wrong server key → 401", async () => {
+    const res = await fetch(`${BASE_URL}/api/mcp/${keyTestServerId}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer msk_invalidkey12345678901234567890",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test("MCP endpoint — server key for wrong server → 401", async () => {
+    // Use the key from keyTestServer on a different serverId
+    const res = await fetch(`${BASE_URL}/api/mcp/mts_system`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${keyTestApiKey}`,
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" }),
+    });
+    // msk_ key should not work for a different server
+    expect(res.status).toBe(401);
+  });
+
+  test("MCP endpoint — JWT auth still works (backward compat)", async () => {
+    const res = await fetch(`${BASE_URL}/api/mcp/${keyTestServerId}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-03-26",
+          capabilities: {},
+          clientInfo: { name: "test", version: "1.0" },
+        },
+      }),
+    });
+    expect(res.status).not.toBe(401);
+  });
+
+  test("DELETE /:id/api-key — revoke key", async () => {
+    const res = await apiDelete(`/mcp-tool-servers/${keyTestServerId}/api-key`);
+    expect(res.status).toBe(200);
+    const data = await json(res);
+    expect(data.revoked).toBe(true);
+
+    // Verify prefix is now null
+    const getRes = await apiGet(`/mcp-tool-servers/${keyTestServerId}`);
+    const server = await json(getRes);
+    expect(server.apiKeyPrefix).toBeNull();
+  });
+
+  test("MCP endpoint — revoked key → 401", async () => {
+    const res = await fetch(`${BASE_URL}/api/mcp/${keyTestServerId}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${keyTestApiKey}`,
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test("POST /:id/regenerate-key on builtin → 403", async () => {
+    const res = await apiPost("/mcp-tool-servers/mts_system/regenerate-key", {});
+    expect(res.status).toBe(403);
+  });
+});
+

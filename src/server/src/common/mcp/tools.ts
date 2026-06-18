@@ -68,63 +68,69 @@ import { registerMcpToolUpdate } from "./tools/mcp-servers/mcp-tool-update.js";
 
 // ── Register All ───────────────────────────────────────────────────────────────
 
-export function registerAllSystemTools(server: McpServer) {
+export const SYSTEM_TOOLS_REGISTRY: Record<string, (server: McpServer) => void> = {
   // KV Store
-  registerKvList(server);
-  registerKvGet(server);
-  registerKvSet(server);
-  registerKvDelete(server);
+  kv_list: registerKvList,
+  kv_get: registerKvGet,
+  kv_set: registerKvSet,
+  kv_delete: registerKvDelete,
 
   // DataTables
-  registerDatatablesListProjects(server);
-  registerDatatablesCreateProject(server);
-  registerDatatablesListTables(server);
-  registerDatatablesCreateTable(server);
-  registerDatatablesUpdateTable(server);
-  registerDatatablesAddColumn(server);
-  registerDatatablesUpdateColumn(server);
-  registerDatatablesDeleteColumn(server);
-  registerDatatablesQueryRows(server);
-  registerDatatablesGetRow(server);
-  registerDatatablesInsertRow(server);
-  registerDatatablesBulkUpdateRows(server);
-  registerDatatablesBulkDeleteRows(server);
+  datatables_list_projects: registerDatatablesListProjects,
+  datatables_create_project: registerDatatablesCreateProject,
+  datatables_list_tables: registerDatatablesListTables,
+  datatables_create_table: registerDatatablesCreateTable,
+  datatables_update_table: registerDatatablesUpdateTable,
+  datatables_add_column: registerDatatablesAddColumn,
+  datatables_update_column: registerDatatablesUpdateColumn,
+  datatables_delete_column: registerDatatablesDeleteColumn,
+  datatables_query_rows: registerDatatablesQueryRows,
+  datatables_get_row: registerDatatablesGetRow,
+  datatables_insert_row: registerDatatablesInsertRow,
+  datatables_bulk_update_rows: registerDatatablesBulkUpdateRows,
+  datatables_bulk_delete_rows: registerDatatablesBulkDeleteRows,
 
   // Object Storage
-  registerStorageListBuckets(server);
-  registerStorageListObjects(server);
-  registerStorageGetObjectInfo(server);
-  registerStorageGetDownloadUrl(server);
-  registerStorageUploadObject(server);
-  registerStorageDeleteObject(server);
+  storage_list_buckets: registerStorageListBuckets,
+  storage_list_objects: registerStorageListObjects,
+  storage_get_object_info: registerStorageGetObjectInfo,
+  storage_get_download_url: registerStorageGetDownloadUrl,
+  storage_upload_object: registerStorageUploadObject,
+  storage_delete_object: registerStorageDeleteObject,
 
   // Browser Profiles
-  registerBrowserList(server);
-  registerBrowserCreate(server);
-  registerBrowserStart(server);
-  registerBrowserStop(server);
-  registerBrowserDelete(server);
-  registerBrowserListTabs(server);
-  registerBrowserRunSteps(server);
-  registerBrowserQuickRun(server);
+  browser_list: registerBrowserList,
+  browser_create: registerBrowserCreate,
+  browser_start: registerBrowserStart,
+  browser_stop: registerBrowserStop,
+  browser_delete: registerBrowserDelete,
+  browser_list_tabs: registerBrowserListTabs,
+  browser_run_steps: registerBrowserRunSteps,
+  browser_quick_run: registerBrowserQuickRun,
 
   // Dynamic APIs
-  registerDynamicApiList(server);
-  registerDynamicApiGet(server);
-  registerDynamicApiCreate(server);
-  registerDynamicApiUpdate(server);
-  registerDynamicApiDelete(server);
+  dynamic_api_list: registerDynamicApiList,
+  dynamic_api_get: registerDynamicApiGet,
+  dynamic_api_create: registerDynamicApiCreate,
+  dynamic_api_update: registerDynamicApiUpdate,
+  dynamic_api_delete: registerDynamicApiDelete,
 
   // MCP Servers
-  registerMcpServerList(server);
-  registerMcpServerGet(server);
-  registerMcpServerCreate(server);
-  registerMcpServerUpdate(server);
-  registerMcpServerDelete(server);
-  registerMcpToolList(server);
-  registerMcpToolGet(server);
-  registerMcpToolCreate(server);
-  registerMcpToolUpdate(server);
-  registerMcpToolDelete(server);
-  registerMcpToolTest(server);
+  mcp_server_list: registerMcpServerList,
+  mcp_server_get: registerMcpServerGet,
+  mcp_server_create: registerMcpServerCreate,
+  mcp_server_update: registerMcpServerUpdate,
+  mcp_server_delete: registerMcpServerDelete,
+  mcp_tool_list: registerMcpToolList,
+  mcp_tool_get: registerMcpToolGet,
+  mcp_tool_create: registerMcpToolCreate,
+  mcp_tool_update: registerMcpToolUpdate,
+  mcp_tool_delete: registerMcpToolDelete,
+  mcp_tool_test: registerMcpToolTest,
+};
+
+export function registerAllSystemTools(server: McpServer) {
+  for (const registerFn of Object.values(SYSTEM_TOOLS_REGISTRY)) {
+    registerFn(server);
+  }
 }

@@ -208,7 +208,13 @@ mkdir -p "$TARBALL_DIR"
 TARBALL_NAME="agent-hands-${NEW_VERSION}.tar.gz"
 TARBALL_PATH="$TARBALL_DIR/$TARBALL_NAME"
 
-(cd "$STAGING_DIR" && COPYFILE_DISABLE=1 tar -czf "$TARBALL_PATH" agent-hands)
+# Strip macOS extended attributes (prevents LIBARCHIVE.xattr warnings on Linux)
+if [[ "$(uname)" == "Darwin" ]]; then
+  xattr -cr "$STAGING" 2>/dev/null || true
+fi
+
+(cd "$STAGING_DIR" && COPYFILE_DISABLE=1 tar -czf "$TARBALL_PATH" --no-xattrs agent-hands 2>/dev/null) \
+  || (cd "$STAGING_DIR" && COPYFILE_DISABLE=1 tar -czf "$TARBALL_PATH" agent-hands)
 
 TARBALL_SIZE=$(du -h "$TARBALL_PATH" | cut -f1 | tr -d ' ')
 success "Tarball created: ${TARBALL_NAME} (${TARBALL_SIZE})"
@@ -271,7 +277,7 @@ if [ "$IS_PRERELEASE" = true ]; then
 ### Install this pre-release
 
 \`\`\`bash
-VERSION=${NEW_VERSION} curl -fsSL https://raw.githubusercontent.com/phamvanquyit/agent-hands/main/install.sh | bash
+export VERSION=${NEW_VERSION} && curl -fsSL https://raw.githubusercontent.com/phamvanquyit/agent-hands/main/install.sh | bash
 \`\`\`
 
 ---
@@ -289,7 +295,7 @@ curl -fsSL https://raw.githubusercontent.com/phamvanquyit/agent-hands/main/insta
 ### Or install a specific version
 
 \`\`\`bash
-VERSION=${NEW_VERSION} curl -fsSL https://raw.githubusercontent.com/phamvanquyit/agent-hands/main/install.sh | bash
+export VERSION=${NEW_VERSION} && curl -fsSL https://raw.githubusercontent.com/phamvanquyit/agent-hands/main/install.sh | bash
 \`\`\`
 
 ---
@@ -315,7 +321,7 @@ echo -e "${GREEN}${BOLD}🎉 Release ${TAG} complete!${NC}"
 echo ""
 echo -e "  ${BOLD}Release page${NC}: https://github.com/phamvanquyit/agent-hands/releases/tag/${TAG}"
 if [ "$IS_PRERELEASE" = true ]; then
-  echo -e "  ${BOLD}Test cmd${NC}   : ${CYAN}VERSION=${NEW_VERSION} curl -fsSL https://raw.githubusercontent.com/phamvanquyit/agent-hands/main/install.sh | bash${NC}"
+  echo -e "  ${BOLD}Test cmd${NC}   : ${CYAN}export VERSION=${NEW_VERSION} && curl -fsSL https://raw.githubusercontent.com/phamvanquyit/agent-hands/main/install.sh | bash${NC}"
   echo ""
   echo -e "  ${DIM}This pre-release will NOT affect users running the default install command.${NC}"
   echo -e "  ${DIM}Share the test command above with your testers.${NC}"

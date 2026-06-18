@@ -153,6 +153,9 @@ export const mcpToolServers = sqliteTable("mcp_tool_servers", {
     .notNull()
     .default("custom"),
   isActive: int("is_active").notNull().default(1),
+  extendsBuiltin: text("extends_builtin").notNull().default("[]"),
+  apiKeyHash: text("api_key_hash"),          // SHA-256 hash of msk_xxx key
+  apiKeyPrefix: text("api_key_prefix"),      // first 8 chars (msk_xxxx) for display
   createdAt: int("created_at").notNull(),
   updatedAt: int("updated_at").notNull(),
 });

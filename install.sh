@@ -5,8 +5,8 @@
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/phamvanquyit/agent-hands/main/install.sh | bash
 #
-# Options (environment variables):
-#   VERSION=0.3.0      Install a specific version (default: latest)
+# Options (environment variables — use export before piping):
+#   export VERSION=0.3.0 && curl ... | bash    Install a specific version
 #   INSTALL_DIR=...    Custom install directory (default: ~/.local/share/agent-hands)
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
@@ -121,15 +121,69 @@ fi
 
 STAGING_DIR="$TMP_DIR/staging"
 mkdir -p "$STAGING_DIR"
-tar -xzf "$TMP_DIR/$TARBALL_NAME" -C "$STAGING_DIR" --strip-components=1
+tar -xzf "$TMP_DIR/$TARBALL_NAME" -C "$STAGING_DIR" --strip-components=1 --no-xattrs 2>/dev/null \
+  || tar -xzf "$TMP_DIR/$TARBALL_NAME" -C "$STAGING_DIR" --strip-components=1 2>/dev/null \
+  || tar -xzf "$TMP_DIR/$TARBALL_NAME" -C "$STAGING_DIR" --strip-components=1
 
 # Stop running server BEFORE removing the old directory.
 # If we don't, the monitor/server process keeps running with a deleted cwd,
 # __dirname resolves to a stale inode, and the SPA routes fail with 404.
+
+# Read saved port from config (so we can kill processes on the right port)
+DATA_DIR="${DATA_DIR:-$HOME/.agent-hands}"
+SAVED_PORT=""
+CONF_FILE="$DATA_DIR/.agent-hands.conf"
+if [ -f "$CONF_FILE" ]; then
+  SAVED_PORT=$(grep -o '"port":[0-9]*' "$CONF_FILE" 2>/dev/null | grep -o '[0-9]*' || true)
+fi
+SAVED_PORT="${SAVED_PORT:-18080}"
+
 if [ -f "$INSTALL_DIR/bin/agent-hands.js" ]; then
   info "Stopping running server before upgrade..."
   bun "$INSTALL_DIR/bin/agent-hands.js" stop 2>/dev/null || true
-  sleep 1
+  sleep 2
+fi
+
+# Kill any remaining processes on the port (handles orphans and failed CLI stop)
+kill_port_processes() {
+  local target_port="$1"
+  local pids=""
+
+  # Try lsof first (macOS + most Linux)
+  pids=$(lsof -ti :"$target_port" 2>/dev/null || true)
+
+  # Fallback: ss (Alpine/Debian without lsof)
+  if [ -z "$pids" ]; then
+    pids=$(ss -tlnp "sport = :$target_port" 2>/dev/null | grep -oP 'pid=\K[0-9]+' || true)
+  fi
+
+  if [ -n "$pids" ]; then
+    info "Killing remaining processes on port ${target_port}: ${pids}"
+    for p in $pids; do
+      kill "$p" 2>/dev/null || true
+    done
+    sleep 2
+    # Force kill if still alive
+    for p in $pids; do
+      kill -0 "$p" 2>/dev/null && kill -9 "$p" 2>/dev/null || true
+    done
+    sleep 1
+  fi
+}
+
+kill_port_processes "$SAVED_PORT"
+
+# Also kill by PID file if it exists
+PID_FILE="$DATA_DIR/server.pid"
+if [ -f "$PID_FILE" ]; then
+  OLD_PID=$(cat "$PID_FILE" 2>/dev/null | tr -d '[:space:]')
+  if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+    info "Killing old process PID ${OLD_PID}..."
+    kill "$OLD_PID" 2>/dev/null || true
+    sleep 2
+    kill -0 "$OLD_PID" 2>/dev/null && kill -9 "$OLD_PID" 2>/dev/null || true
+  fi
+  rm -f "$PID_FILE"
 fi
 
 # Only remove old installation after successful extract + server stop
@@ -190,11 +244,12 @@ else
   fi
 fi
 
-# ── 8. Start/Restart Server ──────────────────────────────────────────────────
+# ── 8. Start Server ──────────────────────────────────────────────────────────
 # The server auto-seeds a default super admin on first start if no users exist.
+# We already stopped the old process above, so just start (not restart).
 echo ""
 info "Starting Agent Hands server..."
-if bun "$INSTALL_DIR/bin/agent-hands.js" restart; then
+if bun "$INSTALL_DIR/bin/agent-hands.js" start; then
   echo ""
   success "Agent Hands is up and running!"
   echo -e "   ${BOLD}Version${NC}  : ${VERSION_NUM}"
@@ -204,8 +259,16 @@ if bun "$INSTALL_DIR/bin/agent-hands.js" restart; then
   fi
   echo ""
   echo -e "   🎉 ${BOLD}Web UI is available at:${NC}"
-  echo -e "     🔗  ${CYAN}http://localhost:18080${NC}"
+  echo -e "     🔗  ${CYAN}http://localhost:${SAVED_PORT}${NC}"
   echo ""
+
+  # Verify running version matches installed version
+  sleep 2
+  RUNNING_VERSION=$(curl -fsSL "http://127.0.0.1:${SAVED_PORT}/api/system/version" 2>/dev/null | grep -o '"current":"[^"]*"' | grep -o '[0-9][^"]*' || true)
+  if [ -n "$RUNNING_VERSION" ] && [ "$RUNNING_VERSION" != "$VERSION_NUM" ]; then
+    warn "Version mismatch! Installed v${VERSION_NUM} but server reports v${RUNNING_VERSION}"
+    warn "Try: agent-hands stop && agent-hands start"
+  fi
 
   # ── Show default credentials on first install ──────────────────────────
   if [ "$IS_FIRST_INSTALL" = true ]; then

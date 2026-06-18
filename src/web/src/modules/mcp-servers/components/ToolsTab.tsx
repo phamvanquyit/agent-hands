@@ -1,6 +1,7 @@
 import { Switch } from "antd";
 import { Code, Database, HardDrive, Monitor, Plug, Plus, Trash2, Variable, Wrench, Zap } from "lucide-react";
-import type { McpToolItem } from "src/lib/types";
+import { useState } from "react";
+import type { McpToolItem, McpToolServerItem } from "src/lib/types";
 
 // ── Built-in System Tools (individual tools exposed to AI agents) ────────────
 
@@ -101,20 +102,26 @@ const BUILTIN_TOOLS: BuiltinToolCategory[] = [
 export function ToolsTab({
   id,
   isBuiltin,
+  server,
   tools,
   onToggle,
   onDeleteTool,
   onNewTool,
+  onToggleSystemTool,
   navigate,
 }: {
   id: string;
   isBuiltin: boolean;
+  server?: McpToolServerItem;
   tools: McpToolItem[];
   onToggle: (t: McpToolItem) => void;
   onDeleteTool: (t: McpToolItem) => void;
   onNewTool: () => void;
+  onToggleSystemTool?: (toolName: string, active: boolean) => void;
   navigate: (path: string) => void;
 }) {
+  const [isSystemToolsExpanded, setIsSystemToolsExpanded] = useState(() => !!server?.extendsBuiltin?.length);
+
   if (!isBuiltin) {
     return (
       <div className="max-w-[800px] mx-auto flex flex-col gap-6">
@@ -168,6 +175,70 @@ export function ToolsTab({
                     >
                       <Trash2 size={13} />
                     </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Inherited System Tools Section */}
+        <div className="mt-8 border-t border-hairline pt-6">
+          <div
+            onClick={() => setIsSystemToolsExpanded(!isSystemToolsExpanded)}
+            className="flex items-center justify-between mb-4 cursor-pointer hover:text-ink select-none group"
+          >
+            <div className="flex items-center gap-2">
+              <Zap size={14} className="text-muted group-hover:text-ink transition-colors" />
+              <span className="font-mono text-[11px] uppercase tracking-wider text-muted group-hover:text-ink transition-colors font-medium">
+                Inherit System Tools ({server?.extendsBuiltin?.length ?? 0} enabled)
+              </span>
+            </div>
+            <span className="text-[11px] font-mono text-muted-soft group-hover:text-ink transition-colors">
+              {isSystemToolsExpanded ? "[ Collapse ]" : "[ Expand ]"}
+            </span>
+          </div>
+
+          {isSystemToolsExpanded && (
+            <div className="flex flex-col gap-6">
+              {BUILTIN_TOOLS.map((category, catIdx) => (
+                <div key={category.category} className="animate-[fadeInUp_0.35s_cubic-bezier(0.16,1,0.3,1)_both]" style={{ animationDelay: `${catIdx * 0.04}s` }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="flex items-center justify-center w-5 h-5 rounded text-muted">{category.icon}</div>
+                    <span className="font-mono text-[11px] uppercase tracking-wider text-muted font-medium">{category.category}</span>
+                    <span className="font-mono text-[10px] text-muted-soft">({category.tools.length})</span>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    {category.tools.map((tool) => {
+                      const isInherited = !!server?.extendsBuiltin?.includes(tool.name);
+                      return (
+                        <div
+                          key={tool.name}
+                          className="flex items-center justify-between px-4 py-3 border border-hairline rounded-md bg-surface-card hover:border-hairline-strong transition-colors duration-150"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className={`flex items-center justify-center w-7 h-7 rounded shrink-0 border ${
+                              isInherited
+                                ? "bg-timeline-thinking/10 border-timeline-thinking/20 text-accent-amber"
+                                : "bg-canvas border-hairline text-muted"
+                            }`}>
+                              <Wrench size={12} strokeWidth={1.5} />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="font-mono text-[13px] text-ink font-medium">{tool.name}</div>
+                              <div className="text-[12px] text-muted mt-0.5">{tool.description}</div>
+                            </div>
+                          </div>
+                          <div className="shrink-0 pl-4">
+                            <Switch
+                              size="small"
+                              checked={isInherited}
+                              onChange={(checked) => onToggleSystemTool?.(tool.name, checked)}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               ))}

@@ -32,6 +32,8 @@ import {
   deleteMcpTool,
   createMcpToolLog,
   listMcpToolLogs,
+  regenerateMcpServerApiKey,
+  revokeMcpServerApiKey,
 } from "./mcp-tool-server.service.js";
 import { runMcpCodingAgent, type McpAgentEvent } from "./mcp-tool-server.coding-agent.js";
 
@@ -156,6 +158,36 @@ export function registerMcpServerRoutes(app: FastifyInstance) {
       }
     },
   );
+
+  // ── MCP Server API Key Management ─────────────────────────────────────────
+
+  // POST /:id/regenerate-key — regenerate API key for MCP server
+  r.post("/:id/regenerate-key", { preHandler: [requireAuth] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const existing = await getMcpServerById(id);
+    if (!existing) return reply.code(400).send({ error: "not_found", message: "MCP server not found" });
+
+    if (isBuiltinServer(id)) {
+      return reply.code(403).send({ error: "forbidden", message: "Cannot manage API key for built-in server" });
+    }
+
+    const result = await regenerateMcpServerApiKey(id);
+    return reply.send(result);
+  });
+
+  // DELETE /:id/api-key — revoke API key for MCP server
+  r.delete("/:id/api-key", { preHandler: [requireAuth] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const existing = await getMcpServerById(id);
+    if (!existing) return reply.code(400).send({ error: "not_found", message: "MCP server not found" });
+
+    if (isBuiltinServer(id)) {
+      return reply.code(403).send({ error: "forbidden", message: "Cannot manage API key for built-in server" });
+    }
+
+    await revokeMcpServerApiKey(id);
+    return reply.send({ id, revoked: true });
+  });
 }
 
 // ── Tool Routes (nested under /:id/tools) ───────────────────────────────────

@@ -12,6 +12,8 @@ export function useServerDetail() {
   const [server, setServer] = useState<McpToolServerItem | null>(null);
   const [tools, setTools] = useState<McpToolItem[]>([]);
   const [loading, setLoading] = useState(true);
+  /** Raw API key — shown only once after create/regenerate */
+  const [revealedApiKey, setRevealedApiKey] = useState<string | null>(null);
 
   const isBuiltin = server?.type === "builtin";
 
@@ -28,7 +30,7 @@ export function useServerDetail() {
     } finally {
       setLoading(false);
     }
-  }, [id, navigate]);
+  }, [id, navigate, message]);
 
   useEffect(() => {
     fetchData();
@@ -68,12 +70,33 @@ export function useServerDetail() {
 
   // ── Edit server ──────────────────────────────────────────────────────────
 
-  const handleEditServer = async (data: { name?: string; description?: string }) => {
+  const handleEditServer = async (data: { name?: string; description?: string; extendsBuiltin?: string[] }) => {
     if (!id) return;
     try {
       const updated = await client.mcpToolServers.update(id, data);
       setServer(updated);
       message.success("Server updated");
+    } catch (err) {
+      if (err instanceof AgentHandsError) message.error(err.message);
+    }
+  };
+
+  // ── Toggle system tool inheritance ───────────────────────────────────────
+
+  const handleToggleSystemTool = async (toolName: string, active: boolean) => {
+    if (!id || !server) return;
+    try {
+      let newExtended = [...(server.extendsBuiltin || [])];
+      if (active) {
+        if (!newExtended.includes(toolName)) newExtended.push(toolName);
+      } else {
+        newExtended = newExtended.filter((name) => name !== toolName);
+      }
+      const updated = await client.mcpToolServers.update(id, {
+        extendsBuiltin: newExtended,
+      });
+      setServer(updated);
+      message.success(`${active ? "Enabled" : "Disabled"} inheritance for ${toolName}`);
     } catch (err) {
       if (err instanceof AgentHandsError) message.error(err.message);
     }
@@ -123,17 +146,60 @@ export function useServerDetail() {
     });
   };
 
+  // ── Regenerate API key ───────────────────────────────────────────────────
+
+  const handleRegenerateKey = async () => {
+    if (!id) return;
+    try {
+      const result = await client.mcpToolServers.regenerateKey(id);
+      setRevealedApiKey(result.apiKey);
+      setServer((prev) => (prev ? { ...prev, apiKeyPrefix: result.apiKeyPrefix } : prev));
+      message.success("API key regenerated");
+    } catch (err) {
+      if (err instanceof AgentHandsError) message.error(err.message);
+      else message.error("Failed to regenerate API key");
+    }
+  };
+
+  // ── Revoke API key ──────────────────────────────────────────────────────
+
+  const handleRevokeKey = () => {
+    if (!id) return;
+    modal.confirm({
+      title: "Revoke API Key",
+      content: "Revoking the API key will disconnect all agents using it. You can regenerate a new key later.",
+      okText: "Revoke",
+      okButtonProps: { danger: true },
+      cancelText: "Cancel",
+      onOk: async () => {
+        try {
+          await client.mcpToolServers.revokeKey(id);
+          setServer((prev) => (prev ? { ...prev, apiKeyPrefix: null } : prev));
+          setRevealedApiKey(null);
+          message.success("API key revoked");
+        } catch (err) {
+          if (err instanceof AgentHandsError) message.error(err.message);
+        }
+      },
+    });
+  };
+
   return {
     id,
     server,
     tools,
     loading,
     isBuiltin,
+    revealedApiKey,
     handleToggleTool,
     handleCreateTool,
     handleEditServer,
+    handleToggleSystemTool,
     handleDeleteServer,
     handleDeleteTool,
+    handleRegenerateKey,
+    handleRevokeKey,
     navigate,
   };
 }
+

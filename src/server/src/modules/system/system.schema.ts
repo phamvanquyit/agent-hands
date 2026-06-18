@@ -6,17 +6,13 @@ export const versionResponseSchema = z.object({
   hasUpdate: z.boolean(),
   channel: z.enum(["stable", "dev"]),
   isPreRelease: z.boolean(),
+  installCommand: z.string().nullable(),
   checkedAt: z.number(),
 });
 
 export type VersionResponse = z.infer<typeof versionResponseSchema>;
 
-export const updateResponseSchema = z.object({
-  ok: z.boolean(),
-  message: z.string(),
-});
 
-export type UpdateResponse = z.infer<typeof updateResponseSchema>;
 
 // ── System Info ──────────────────────────────────────────────────────────────
 

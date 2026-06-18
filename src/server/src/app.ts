@@ -11,7 +11,7 @@ import Fastify from "fastify";
 import type { FastifyError, FastifyInstance } from "fastify";
 import { type ZodTypeProvider, serializerCompiler, validatorCompiler } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { requireAuth } from "./common/auth/middleware.js";
+import { requireAuth, requireMcpAuth } from "./common/auth/middleware.js";
 import { createMcpServer } from "./common/mcp/server.js";
 // ── Static module imports (required for bun build bundling) ─────────────────
 import apiDocsModule, { MODULE_PREFIX as API_DOCS_PREFIX } from "./modules/api-docs/api-doc.module.js";
@@ -121,6 +121,17 @@ async function createCustomMcpServer(serverId: string, authToken: string): Promi
         };
       },
     );
+  }
+
+  // Register extended system tools
+  if (serverRecord.extendsBuiltin && Array.isArray(serverRecord.extendsBuiltin)) {
+    const { SYSTEM_TOOLS_REGISTRY } = await import("./common/mcp/tools.js");
+    for (const toolName of serverRecord.extendsBuiltin) {
+      const registerFn = SYSTEM_TOOLS_REGISTRY[toolName];
+      if (registerFn) {
+        registerFn(server);
+      }
+    }
   }
 
   return server;
@@ -285,7 +296,7 @@ export async function createApp() {
   // construction time. So we must store the session AFTER handleRequest.
 
   // POST /api/mcp/:serverId — handle JSON-RPC messages (initialize, tool calls, etc.)
-  app.post("/api/mcp/:serverId", { preHandler: [requireAuth] }, async (req, reply) => {
+  app.post("/api/mcp/:serverId", { preHandler: [requireMcpAuth] }, async (req, reply) => {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
     // ── Existing session → reuse transport ──────────────────────────────────
@@ -303,6 +314,7 @@ export async function createApp() {
     const { serverId } = req.params as { serverId: string };
 
     // Extract auth token for custom server context SDK
+    // Use the raw bearer token (works for both msk_ and ltk_/JWT)
     const authHeader = req.headers.authorization;
     const authToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : "";
 
@@ -338,7 +350,7 @@ export async function createApp() {
   });
 
   // GET /api/mcp/:serverId — SSE stream for server-to-client notifications
-  app.get("/api/mcp/:serverId", { preHandler: [requireAuth] }, async (req, reply) => {
+  app.get("/api/mcp/:serverId", { preHandler: [requireMcpAuth] }, async (req, reply) => {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
     if (!sessionId) {
       return reply.code(400).send({ error: "bad_request", message: "Missing mcp-session-id header" });
@@ -364,7 +376,7 @@ export async function createApp() {
   });
 
   // DELETE /api/mcp/:serverId — close a session explicitly
-  app.delete("/api/mcp/:serverId", { preHandler: [requireAuth] }, async (req, reply) => {
+  app.delete("/api/mcp/:serverId", { preHandler: [requireMcpAuth] }, async (req, reply) => {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
     if (!sessionId) {
       return reply.code(400).send({ error: "bad_request", message: "Missing mcp-session-id header" });
@@ -385,8 +397,9 @@ export async function createApp() {
   // Uses two separate endpoints: GET /sse (SSE stream) + POST /messages (JSON-RPC)
 
   // GET /api/mcp/:serverId/sse — establish SSE stream
-  app.get("/api/mcp/:serverId/sse", { preHandler: [requireAuth] }, async (req, reply) => {
+  app.get("/api/mcp/:serverId/sse", { preHandler: [requireMcpAuth] }, async (req, reply) => {
     const { serverId } = req.params as { serverId: string };
+    // Use the raw bearer token (works for both msk_ and ltk_/JWT)
     const authHeader = req.headers.authorization;
     const authToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : "";
 
@@ -415,7 +428,7 @@ export async function createApp() {
   });
 
   // POST /api/mcp/:serverId/messages — receive JSON-RPC messages for SSE sessions
-  app.post("/api/mcp/:serverId/messages", { preHandler: [requireAuth] }, async (req, reply) => {
+  app.post("/api/mcp/:serverId/messages", { preHandler: [requireMcpAuth] }, async (req, reply) => {
     const sessionId = (req.query as Record<string, string>).sessionId;
     if (!sessionId) {
       return reply.code(400).send({ error: "bad_request", message: "Missing sessionId query parameter" });

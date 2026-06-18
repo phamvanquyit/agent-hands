@@ -43,6 +43,16 @@ export class McpToolServersResource {
     await this.http.delete(`/api/mcp-tool-servers/${id}`);
   }
 
+  /** Regenerate API key for a server — returns raw key (shown once) */
+  async regenerateKey(id: string): Promise<{ apiKey: string; apiKeyPrefix: string }> {
+    return this.http.post<{ apiKey: string; apiKeyPrefix: string }>(`/api/mcp-tool-servers/${id}/regenerate-key`, {});
+  }
+
+  /** Revoke (delete) the API key for a server */
+  async revokeKey(id: string): Promise<void> {
+    await this.http.delete(`/api/mcp-tool-servers/${id}/api-key`);
+  }
+
   // ── Tool CRUD ───────────────────────────────────────────────────────────
 
   /** List tools for a server */

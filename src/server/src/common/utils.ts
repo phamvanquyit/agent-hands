@@ -40,6 +40,12 @@ export function genApiKey(): string {
   return `ltk_${body}`;
 }
 
+/** Generate an MCP server key — msk_ prefix + 32 chars */
+export function genMcpServerKey(): string {
+  const body = customAlphabet("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", 32)();
+  return `msk_${body}`;
+}
+
 export function now(): number {
   return Date.now();
 }

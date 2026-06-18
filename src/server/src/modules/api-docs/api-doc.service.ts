@@ -902,11 +902,13 @@ servers.forEach(s => console.log(s.name, s.type, s.toolCount));`,
         auth: "both",
         body: `{
   "name": "weather-tools",
-  "description": "Weather-related tools"
+  "description": "Weather-related tools",
+  "extendsBuiltin": ["kv_get", "kv_list"]
 }`,
         jsExample: `const server = await client.mcpToolServers.create({
   name: "weather-tools",
-  description: "Weather-related tools"
+  description: "Weather-related tools",
+  extendsBuiltin: ["kv_get", "kv_list"]
 });`,
       },
       {
@@ -921,9 +923,9 @@ servers.forEach(s => console.log(s.name, s.type, s.toolCount));`,
         path: "/:id",
         summary: "Update MCP server",
         auth: "both",
-        body: `{ "name": "updated-name", "description": "new desc" }`,
+        body: `{ "name": "updated-name", "description": "new desc", "extendsBuiltin": ["kv_get"] }`,
         notes: "Cannot rename the built-in 'System Tools' server.",
-        jsExample: `await client.mcpToolServers.update("mts_xxx", { name: "updated" });`,
+        jsExample: `await client.mcpToolServers.update("mts_xxx", { name: "updated", extendsBuiltin: ["kv_get"] });`,
       },
       {
         method: "DELETE",
@@ -987,6 +989,27 @@ result.items.forEach(t => console.log(t.name));`,
   city: "Tokyo"
 });
 console.log(result.success, result.result);`,
+      },
+      {
+        method: "POST",
+        path: "/:id/regenerate-key",
+        summary: "Regenerate API key for MCP server — raw key returned once",
+        auth: "both",
+        response: `{
+  "apiKey": "msk_AbCdEfGh...",
+  "apiKeyPrefix": "msk_AbCd"
+}`,
+        notes: "⚠️ The raw key is shown only once. Copy it immediately. Old key is invalidated.",
+        jsExample: `const result = await client.mcpToolServers.regenerateKey("mts_xxx");
+console.log(result.apiKey); // save this!`,
+      },
+      {
+        method: "DELETE",
+        path: "/:id/api-key",
+        summary: "Revoke API key for MCP server",
+        auth: "both",
+        notes: "All agents using this key will be disconnected. You can regenerate a new key later.",
+        jsExample: `await client.mcpToolServers.revokeKey("mts_xxx");`,
       },
     ],
   },
@@ -1375,7 +1398,7 @@ const imageUrl = "{{BASE_URL}}/api/browsers/bpr_xxx/screenshot?tabIndex=0";`,
   {
     id: "system",
     label: "System",
-    description: "System information, version checking, and self-update.",
+    description: "System information and version checking. When an update is available, the version endpoint returns an installCommand that you can run manually in your terminal.",
     basePrefix: "/api/system",
     endpoints: [
       {
@@ -1402,32 +1425,26 @@ console.log(info.memory.usage + "% RAM");`,
       {
         method: "GET",
         path: "/version",
-        summary: "Get current and latest version info",
+        summary: "Get current and latest version info with install command",
         auth: "both",
         response: `{
   "current": "0.3.0",
   "latest": "0.3.1",
   "hasUpdate": true,
+  "channel": "stable",
+  "isPreRelease": false,
+  "installCommand": "curl -fsSL https://raw.githubusercontent.com/phamvanquyit/agent-hands/main/install.sh | bash",
   "checkedAt": 1780396120242
 }`,
+        notes: "When hasUpdate is true, installCommand contains the shell command to run for manual update. For pre-release versions, the command includes VERSION=x.y.z prefix.",
         jsExample: `const version = await fetch("{{BASE_URL}}/api/system/version", {
   headers: { "X-API-Key": "YOUR_API_KEY" }
 }).then(res => res.json());
 
-if (version.hasUpdate) console.log("Update available:", version.latest);`,
-      },
-      {
-        method: "POST",
-        path: "/update",
-        summary: "Trigger self-update (superadmin only)",
-        auth: "both",
-        notes: "Downloads and installs the latest version. Server will restart after update.",
-        jsExample: `const result = await fetch("{{BASE_URL}}/api/system/update", {
-  method: "POST",
-  headers: { "X-API-Key": "YOUR_API_KEY" }
-}).then(res => res.json());
-
-console.log(result.ok, result.message);`,
+if (version.hasUpdate) {
+  console.log("Update available:", version.latest);
+  console.log("Run:", version.installCommand);
+}`,
       },
     ],
   },

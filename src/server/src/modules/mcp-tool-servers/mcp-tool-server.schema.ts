@@ -9,6 +9,7 @@ export const createMcpServerBodySchema = z.object({
     .max(100)
     .regex(/^[a-zA-Z0-9_-]+$/, "Name may only contain alphanumeric, hyphen, underscore"),
   description: z.string().max(1000).optional(),
+  extendsBuiltin: z.array(z.string()).optional(),
 });
 
 export const updateMcpServerBodySchema = z.object({
@@ -20,6 +21,7 @@ export const updateMcpServerBodySchema = z.object({
     .optional(),
   description: z.string().max(1000).nullable().optional(),
   isActive: z.boolean().optional(),
+  extendsBuiltin: z.array(z.string()).optional(),
 });
 
 export const mcpServerIdParamsSchema = z.object({

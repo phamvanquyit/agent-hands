@@ -6,6 +6,7 @@ export interface VersionInfo {
   hasUpdate: boolean;
   channel: "stable" | "dev";
   isPreRelease: boolean;
+  installCommand: string | null;
   checkedAt: number;
 }
 
@@ -58,9 +59,7 @@ export class SystemResource {
     return this.http.get<SystemInfo>("/api/system/info");
   }
 
-  triggerUpdate(): Promise<{ ok: boolean; message: string }> {
-    return this.http.post<{ ok: boolean; message: string }>("/api/system/update");
-  }
+
 
   getUpdateChannel(): Promise<{ channel: "stable" | "dev" }> {
     return this.http.get<{ channel: "stable" | "dev" }>("/api/system/update-channel");
