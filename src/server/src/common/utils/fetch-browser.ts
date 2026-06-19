@@ -96,9 +96,9 @@ function buildHeaders(ua: string, url: string): Record<string, string> {
  * Fetch a URL mimicking a real browser request.
  * Randomizes User-Agent and sends all the right headers.
  */
-export async function fetchBrowser(url: string, timeoutMs = 10_000): Promise<Response> {
+export async function fetchBrowser(url: string, timeoutMs = 10_000, customHeaders?: Record<string, string>): Promise<Response> {
   const ua = randomUA();
-  const headers = buildHeaders(ua, url);
+  const headers = { ...buildHeaders(ua, url), ...customHeaders };
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);

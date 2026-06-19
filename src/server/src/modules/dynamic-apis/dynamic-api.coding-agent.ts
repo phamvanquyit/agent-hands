@@ -131,9 +131,9 @@ async function dryRunCode(
 
 // ── Fetch Web utility ────────────────────────────────────────────────────────
 
-async function fetchWebContent(url: string, mode: "raw" | "md" = "raw"): Promise<string> {
+async function fetchWebContent(url: string, mode: "raw" | "md" = "raw", headers?: Record<string, string>): Promise<string> {
   try {
-    const res = await fetchBrowser(url);
+    const res = await fetchBrowser(url, 10_000, headers);
     if (!res.ok) return `HTTP Error ${res.status}: ${res.statusText}`;
     const contentType = res.headers.get("content-type") || "";
     if (contentType.includes("application/json")) {
@@ -186,6 +186,39 @@ GENERAL RULES:
 - NEVER use process.env
 - Use context.log() for debugging output
 
+TOOLS AVAILABLE:
+- write_code: Save handler code as draft
+- run_test: Test the draft code with params
+- fetch_web: Fetch raw content from a URL (no JS rendering)
+- browser_quick_run: Launch an ephemeral stealth browser and run automation steps (navigate, click, type, screenshot, extract_text, get_snapshot, etc.)
+
+WHEN TO USE browser_quick_run vs fetch_web:
+- Use fetch_web for simple API calls or static HTML pages
+- Use browser_quick_run when you need:
+  • JavaScript-rendered content (SPAs, dynamic pages)
+  • Screenshots of web pages
+  • Interacting with web UI (click buttons, fill forms)
+  • Extracting data from JS-heavy sites
+  • Getting accessibility snapshots (get_snapshot)
+  • Testing how a URL looks/works in a real browser
+
+browser_quick_run STEPS reference:
+- navigate: go to URL (requires url)
+- click: click element (requires selector or text)
+- type: type into input (requires selector + text)
+- screenshot: capture page as PNG (returns file URL)
+- get_content: get full HTML
+- get_snapshot: get accessibility tree (compact, preferred over get_content)
+- get_interactive_elements: list clickable/interactive elements
+- extract_text: get text from element (requires selector)
+- eval: run JavaScript on page (requires code)
+- wait: wait for element/text to appear
+- sleep: pause N ms
+- scroll: scroll page (direction: up/down/top/bottom)
+- select: select dropdown option
+- press_key: press keyboard key (requires key, e.g. "Enter")
+- hover: hover over element
+
 WORKFLOW — choose the right approach based on the user's request:
 
 ## A) User asks to WRITE or MODIFY code:
@@ -204,12 +237,17 @@ WORKFLOW — choose the right approach based on the user's request:
 ## C) User asks a QUESTION (e.g. "what does this do?", "explain the code"):
 1. Just respond with text — no tool calls needed
 
+## D) User asks to SCRAPE, SCREENSHOT, or INTERACT with a web page:
+1. Use browser_quick_run with appropriate steps
+2. Use the results to inform your code or response
+
 RULES:
 - After EVERY write_code call, your VERY NEXT action MUST be run_test. NEVER skip this.
 - NEVER call write_code twice in a row without run_test in between.
 - Do NOT write code in markdown code blocks. Always use the write_code tool.
 - Do NOT rewrite code unnecessarily — if the user just wants to test, use run_test directly.
-- When user says "test", "try", "run" etc. without asking for changes → use Workflow B.`;
+- When user says "test", "try", "run" etc. without asking for changes → use Workflow B.
+- browser_quick_run is limited to 5 calls per session. Use it wisely.`;
 
 // ── Tool factory ─────────────────────────────────────────────────────────────
 
@@ -223,19 +261,20 @@ function createLangChainTools(
   const pendingTest = { value: false };
 
   const fetchWebTool = tool(
-    async ({ url, mode }: { url: string; mode?: string }) => {
+    async ({ url, mode, headers }: { url: string; mode?: string; headers?: Record<string, string> }) => {
       fetchWebCount.count++;
       if (fetchWebCount.count > 10) {
         return `[LIMIT REACHED] You have already made 10 fetch_web calls. Use the information you have to write the code.`;
       }
-      return await fetchWebContent(url, (mode as "raw" | "md") ?? "raw");
+      return await fetchWebContent(url, (mode as "raw" | "md") ?? "raw", headers);
     },
     {
       name: "fetch_web",
-      description: "Fetch content from a URL. Use ONLY when you need to inspect a specific target URL or read unknown API documentation.",
+      description: "Fetch content from a URL. Use ONLY when you need to inspect a specific target URL or read unknown API documentation. You can pass custom headers (e.g. Authorization, Accept).",
       schema: z.object({
         url: z.string().url(),
         mode: z.enum(["raw", "md"]).optional(),
+        headers: z.record(z.string()).optional().describe("Custom HTTP headers to send with the request (e.g. Authorization, Accept, Cookie)"),
       }),
     },
   );
@@ -320,7 +359,73 @@ function createLangChainTools(
     },
   );
 
-  return [fetchWebTool, writeCodeTool, runTestTool];
+  // ── browser_quick_run tool ──────────────────────────────────────────────────
+
+  const browserQuickRunCount = { count: 0 };
+
+  const browserQuickRunTool = tool(
+    async ({ steps, continueOnError, includePageState }: {
+      steps: Array<{
+        action: string;
+        url?: string;
+        selector?: string;
+        text?: string;
+        code?: string;
+        timeout?: number;
+        selectorType?: string;
+        key?: string;
+        value?: string;
+        direction?: string;
+        amount?: number;
+      }>;
+      continueOnError?: boolean;
+      includePageState?: boolean;
+    }) => {
+      browserQuickRunCount.count++;
+      if (browserQuickRunCount.count > 5) {
+        return `[LIMIT REACHED] You have already made 5 browser_quick_run calls this session. Use the data you have.`;
+      }
+      try {
+        const { runBatchSteps } = await import("../../modules/browsers/browser.service.js");
+        const result = await runBatchSteps({
+          profileId: null,
+          steps,
+          continueOnError: continueOnError ?? false,
+          includePageState: includePageState ?? false,
+        } as any);
+        return JSON.stringify(result, null, 2);
+      } catch (err: unknown) {
+        return JSON.stringify({ error: (err as Error).message });
+      }
+    },
+    {
+      name: "browser_quick_run",
+      description: "Launch an ephemeral stealth browser and run automation steps. Perfect for scraping JS-rendered pages, taking screenshots, interacting with web UIs. No profile needed — browser auto-closes after execution.",
+      schema: z.object({
+        steps: z.array(z.object({
+          action: z.enum([
+            "navigate", "click", "type", "screenshot", "get_content", "eval",
+            "wait", "sleep", "scroll", "select", "press_key", "hover",
+            "extract_text", "get_snapshot", "get_interactive_elements",
+          ]).describe("Step action"),
+          url: z.string().optional().describe("URL for navigate"),
+          selector: z.string().optional().describe("Element selector"),
+          text: z.string().optional().describe("Text for type, or visible text for click/wait"),
+          code: z.string().optional().describe("JS code for eval"),
+          timeout: z.number().int().min(0).optional().describe("Timeout in ms"),
+          selectorType: z.enum(["css", "text", "role", "label", "placeholder", "testid"]).optional().describe("Selector type (default: css)"),
+          key: z.string().optional().describe("Key for press_key (e.g. Enter)"),
+          value: z.string().optional().describe("Value for select"),
+          direction: z.enum(["up", "down", "top", "bottom"]).optional().describe("Direction for scroll"),
+          amount: z.number().int().min(0).optional().describe("Pixels for scroll"),
+        })).min(1).describe("Steps to execute in sequence"),
+        continueOnError: z.boolean().optional().describe("Continue on step failure (default: false)"),
+        includePageState: z.boolean().optional().describe("Include URL + title after each step"),
+      }),
+    },
+  );
+
+  return [fetchWebTool, writeCodeTool, runTestTool, browserQuickRunTool];
 }
 
 // ── Stream agent and emit events ─────────────────────────────────────────────
@@ -338,7 +443,7 @@ async function streamAgentEvents(
 
   const stream = agent.streamEvents(input, {
     version: "v2",
-    recursionLimit: 50,
+    recursionLimit: 100,
   });
 
   for await (const event of stream) {

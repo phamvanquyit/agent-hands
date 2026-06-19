@@ -16,17 +16,9 @@
  * (auto-detects npm imports, per-tool node_modules caching).
  */
 
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-  readdirSync,
-  rmSync,
-  statSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseNpmImports, buildDependencies } from "../../common/sandbox/js-executor.js";
+import { buildDependencies, parseNpmImports } from "../../common/sandbox/js-executor.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -39,9 +31,9 @@ export interface McpToolResult {
 }
 
 export interface McpToolExecOptions {
-  timeoutMs?: number;   // default 30_000
-  baseUrl?: string;     // internal API base URL for context SDK
-  authToken?: string;   // JWT for context SDK
+  timeoutMs?: number; // default 30_000
+  baseUrl?: string; // internal API base URL for context SDK
+  authToken?: string; // JWT for context SDK
 }
 
 // ── Sandbox directory ───────────────────────────────────────────────────────
@@ -55,10 +47,7 @@ function getSandboxDir(toolId: string): string {
  * Ensure sandbox directory exists with node_modules installed.
  * Only re-installs when dependencies change.
  */
-async function ensureSandbox(
-  toolId: string,
-  dependencies: Record<string, string>,
-): Promise<string> {
+async function ensureSandbox(toolId: string, dependencies: Record<string, string>): Promise<string> {
   const sandboxDir = getSandboxDir(toolId);
   mkdirSync(sandboxDir, { recursive: true });
 
@@ -166,8 +155,14 @@ const path = require("path");
     },
     http: httpHelper,
     kv: {
-      get: (key) => httpHelper.get("/api/kv-store/by-key/" + encodeURIComponent(key)),
-      set: (key, value, ttl) => httpHelper.post("/api/kv-store", { key, value: String(value), ttl: ttl || 0 }),
+      get: async (key) => {
+        const res = await httpHelper.get("/api/kv-store/by-key/" + encodeURIComponent(key));
+        if (!res || res.error) return null;
+        const raw = res.value;
+        if (raw === undefined || raw === null) return null;
+        try { return JSON.parse(raw); } catch { return raw; }
+      },
+      set: (key, value, ttl) => httpHelper.post("/api/kv-store", { key, value: typeof value === "string" ? value : JSON.stringify(value), ttl: ttl || 0 }),
     },
     tables: {
       query: (projectId, tableId, filters, page, limit) => {
@@ -277,9 +272,7 @@ export async function executeMcpToolJs(
     });
 
     // 7. Handle timeout
-    const timeoutPromise = new Promise<"timeout">((resolve) =>
-      setTimeout(() => resolve("timeout"), timeoutMs),
-    );
+    const timeoutPromise = new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), timeoutMs));
 
     const exitPromise = proc.exited.then(() => "done" as const);
     const race = await Promise.race([exitPromise, timeoutPromise]);
@@ -351,11 +344,7 @@ export async function executeMcpToolJs(
 /**
  * Execute MCP tool in-process (fast mode, no npm imports).
  */
-export async function executeMcpToolFast(
-  code: string,
-  params: Record<string, unknown>,
-  options: McpToolExecOptions = {},
-): Promise<McpToolResult> {
+export async function executeMcpToolFast(code: string, params: Record<string, unknown>, options: McpToolExecOptions = {}): Promise<McpToolResult> {
   const baseUrl = options.baseUrl ?? "http://127.0.0.1:18080";
   const authToken = options.authToken ?? "";
   const startTime = Date.now();
@@ -363,9 +352,7 @@ export async function executeMcpToolFast(
 
   const context = {
     log: (...args: unknown[]) => {
-      consoleLogs.push(
-        args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "),
-      );
+      consoleLogs.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
     },
     http: {
       _request: async (method: string, url: string, data?: unknown, headers?: Record<string, string>) => {
@@ -391,19 +378,25 @@ export async function executeMcpToolFast(
           return { error: (e as Error).message };
         }
       },
-      get: (url: string, headers?: Record<string, string>) =>
-        context.http._request("GET", url, undefined, headers),
-      post: (url: string, data?: unknown, headers?: Record<string, string>) =>
-        context.http._request("POST", url, data, headers),
-      patch: (url: string, data?: unknown, headers?: Record<string, string>) =>
-        context.http._request("PATCH", url, data, headers),
-      delete: (url: string, headers?: Record<string, string>) =>
-        context.http._request("DELETE", url, undefined, headers),
+      get: (url: string, headers?: Record<string, string>) => context.http._request("GET", url, undefined, headers),
+      post: (url: string, data?: unknown, headers?: Record<string, string>) => context.http._request("POST", url, data, headers),
+      patch: (url: string, data?: unknown, headers?: Record<string, string>) => context.http._request("PATCH", url, data, headers),
+      delete: (url: string, headers?: Record<string, string>) => context.http._request("DELETE", url, undefined, headers),
     },
     kv: {
-      get: (key: string) => context.http.get(`/api/kv-store/by-key/${encodeURIComponent(key)}`),
+      get: async (key: string) => {
+        const res = (await context.http.get(`/api/kv-store/by-key/${encodeURIComponent(key)}`)) as Record<string, unknown> | null;
+        if (!res || res.error) return null;
+        const raw = res.value as string | undefined;
+        if (raw === undefined || raw === null) return null;
+        try {
+          return JSON.parse(raw);
+        } catch {
+          return raw;
+        }
+      },
       set: (key: string, value: unknown, ttl?: number) =>
-        context.http.post("/api/kv-store", { key, value: String(value), ttl: ttl || 0 }),
+        context.http.post("/api/kv-store", { key, value: typeof value === "string" ? value : JSON.stringify(value), ttl: ttl || 0 }),
     },
     tables: {
       query: (projectId: string, tableId: string, filters?: unknown, page = 1, limit = 50) => {
@@ -411,15 +404,12 @@ export async function executeMcpToolFast(
         if (filters) qs += `&filter=${JSON.stringify(filters)}`;
         return context.http.get(`/api/datatables/${projectId}/tables/${tableId}/rows?${qs}`);
       },
-      insert: (projectId: string, tableId: string, data: unknown) =>
-        context.http.post(`/api/datatables/${projectId}/tables/${tableId}/rows`, { data }),
+      insert: (projectId: string, tableId: string, data: unknown) => context.http.post(`/api/datatables/${projectId}/tables/${tableId}/rows`, { data }),
     },
   };
 
   try {
-    const cleanCode = code
-      .replace(/export\s+default\s+/g, "")
-      .replace(/module\.exports\s*=\s*/g, "");
+    const cleanCode = code.replace(/export\s+default\s+/g, "").replace(/module\.exports\s*=\s*/g, "");
 
     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
     const factory = new AsyncFunction(
@@ -431,9 +421,7 @@ export async function executeMcpToolFast(
     const execute = await factory();
     const result = await Promise.race([
       execute(params, context),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Execution timeout")), options.timeoutMs ?? 30_000),
-      ),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Execution timeout")), options.timeoutMs ?? 30_000)),
     ]);
 
     return {
@@ -460,12 +448,7 @@ export async function executeMcpToolFast(
 /**
  * Execute MCP tool — auto-selects fast vs isolated mode.
  */
-export async function executeMcpTool(
-  toolId: string,
-  code: string,
-  params: Record<string, unknown>,
-  options: McpToolExecOptions = {},
-): Promise<McpToolResult> {
+export async function executeMcpTool(toolId: string, code: string, params: Record<string, unknown>, options: McpToolExecOptions = {}): Promise<McpToolResult> {
   const hasImports = parseNpmImports(code).length > 0;
 
   if (hasImports) {

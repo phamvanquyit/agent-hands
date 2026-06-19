@@ -609,6 +609,128 @@
   background-color: hsl(346 70% 44% / 0.1);
 }
 
+/* Markdown prose inside Chain of Thought (react-markdown output) */
+.cot-markdown {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-body);
+  word-break: break-word;
+}
+
+.cot-markdown p {
+  margin-bottom: 6px;
+}
+
+.cot-markdown p:last-child {
+  margin-bottom: 0;
+}
+
+.cot-markdown strong {
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.cot-markdown em {
+  font-style: italic;
+}
+
+.cot-markdown a {
+  color: var(--color-timeline-read);
+  text-decoration: underline;
+}
+
+.cot-markdown ul,
+.cot-markdown ol {
+  padding-left: 16px;
+  margin-bottom: 6px;
+}
+
+.cot-markdown li {
+  margin-bottom: 2px;
+}
+
+.cot-markdown h1,
+.cot-markdown h2,
+.cot-markdown h3,
+.cot-markdown h4 {
+  font-weight: 600;
+  color: var(--color-ink);
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+
+.cot-markdown h1 { font-size: 14px; }
+.cot-markdown h2 { font-size: 13px; }
+.cot-markdown h3 { font-size: 12px; }
+
+.cot-markdown blockquote {
+  border-left: 2px solid var(--color-hairline-strong);
+  padding-left: 10px;
+  margin: 6px 0;
+  color: var(--color-muted);
+}
+
+.cot-markdown hr {
+  border: none;
+  border-top: 1px solid var(--color-hairline);
+  margin: 8px 0;
+}
+
+/* Table scroll wrapper — allows horizontal scroll for wide tables */
+.cot-markdown-table-wrapper {
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 1px solid var(--color-hairline);
+  border-radius: 6px;
+  margin: 6px 0;
+}
+
+.cot-markdown-table-wrapper::-webkit-scrollbar {
+  height: 4px;
+}
+
+.cot-markdown-table-wrapper::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 2px;
+}
+
+.cot-markdown-table-wrapper:hover::-webkit-scrollbar-thumb {
+  background: var(--color-hairline-strong);
+}
+
+.cot-markdown table {
+  width: 100%;
+  min-width: max-content;
+  border-collapse: collapse;
+  font-size: 11px;
+  margin: 0;
+}
+
+.cot-markdown th {
+  font-weight: 500;
+  font-size: 11px;
+  color: var(--color-muted);
+  background: var(--color-canvas-soft);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--color-hairline);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.cot-markdown td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--color-hairline-soft);
+  color: var(--color-body);
+  white-space: nowrap;
+}
+
+/* Override highlight.js theme to match design system */
+.cot-markdown .hljs {
+  background: transparent;
+  color: var(--color-body);
+}
+
 /* Fade-in animation for new steps */
 .cot-fade-in {
   animation: cotFadeIn 0.2s ease-out;
